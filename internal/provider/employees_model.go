@@ -382,6 +382,16 @@ func fromAPIEmployee(ctx context.Context, employee wellbeingclient.Employee, pri
 	}
 
 	if len(dimensions) == 0 {
+		// An explicitly empty map must round trip as an empty map rather than
+		// collapsing to null, or the two would diff on every plan. Deriving
+		// dimensions from a roles list makes this common: anyone matching no
+		// candidate role produces {}.
+		if prior != nil && !prior.Dimensions.IsNull() && !prior.Dimensions.IsUnknown() &&
+			len(prior.Dimensions.Elements()) == 0 {
+			model.Dimensions = prior.Dimensions
+			return model, diags
+		}
+
 		model.Dimensions = types.MapNull(types.StringType)
 		return model, diags
 	}
