@@ -42,3 +42,43 @@ func TestProviderSchemaIsValid(t *testing.T) {
 		}
 	}
 }
+
+func TestProviderSchemaHasClientTuningAttributes(t *testing.T) {
+	t.Parallel()
+
+	resp := &provider.SchemaResponse{}
+	New("test")().Schema(context.Background(), provider.SchemaRequest{}, resp)
+
+	for _, name := range []string{"request_timeout", "max_retries"} {
+		if _, ok := resp.Schema.Attributes[name]; !ok {
+			t.Errorf("provider schema missing attribute %q", name)
+		}
+	}
+}
+
+func TestProviderAttributesAreOptional(t *testing.T) {
+	t.Parallel()
+
+	resp := &provider.SchemaResponse{}
+	New("test")().Schema(context.Background(), provider.SchemaRequest{}, resp)
+
+	// Every provider attribute must be Optional: each has an environment
+	// variable fallback or a default, so a bare `provider "wellbeing" {}` block
+	// has to be valid.
+	for name, attribute := range resp.Schema.Attributes {
+		if !attribute.IsOptional() {
+			t.Errorf("attribute %q is not Optional", name)
+		}
+	}
+}
+
+func TestProviderTokenIsSensitive(t *testing.T) {
+	t.Parallel()
+
+	resp := &provider.SchemaResponse{}
+	New("test")().Schema(context.Background(), provider.SchemaRequest{}, resp)
+
+	if !resp.Schema.Attributes["token"].IsSensitive() {
+		t.Error("token attribute is not marked Sensitive")
+	}
+}

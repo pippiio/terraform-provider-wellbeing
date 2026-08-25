@@ -2,7 +2,9 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -10,6 +12,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"github.com/techchapter/terraform-provider-wellbeing/internal/wellbeingclient"
 )
 
 // Ensure the implementation satisfies the expected interfaces.
@@ -35,9 +39,11 @@ type wellbeingProvider struct {
 }
 
 type wellbeingProviderModel struct {
-	Host      types.String `tfsdk:"host"`
-	Token     types.String `tfsdk:"token"`
-	CompanyID types.String `tfsdk:"company_id"`
+	Host           types.String `tfsdk:"host"`
+	Token          types.String `tfsdk:"token"`
+	CompanyID      types.String `tfsdk:"company_id"`
+	RequestTimeout types.String `tfsdk:"request_timeout"`
+	MaxRetries     types.Int64  `tfsdk:"max_retries"`
 }
 
 // Metadata returns the provider type name.
@@ -49,18 +55,31 @@ func (p *wellbeingProvider) Metadata(_ context.Context, _ provider.MetadataReque
 // Schema defines the provider-level schema for configuration data.
 func (p *wellbeingProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		Description: "Manage HR.ON Wellbeing (previously howdy.care) resources.",
 		Attributes: map[string]schema.Attribute{
 			"host": schema.StringAttribute{
-				Description: "URI for Wellbeing API. May also be provided via WELLBEING_HOST environment variable.",
-				Optional:    true,
+				Description: "Base URI for the Wellbeing API. Defaults to " + wellbeingclient.DefaultHost +
+					". May also be provided via the WELLBEING_HOST environment variable.",
+				Optional: true,
 			},
 			"token": schema.StringAttribute{
-				Description: "Bearer Token for Wellbeing API. May also be provided via WELLBEING_TOKEN environment variable.",
-				Optional:    true,
-				Sensitive:   true,
+				Description: "Bearer token for the Wellbeing API, issued to a user with the HRIntegration role. " +
+					"May also be provided via the WELLBEING_TOKEN environment variable.",
+				Optional:  true,
+				Sensitive: true,
 			},
 			"company_id": schema.StringAttribute{
-				Description: "Company ID for Wellbeing API. May also be provided via WELLBEING_COMPANY_ID environment variable.",
+				Description: "Company ID for the Wellbeing API. " +
+					"May also be provided via the WELLBEING_COMPANY_ID environment variable.",
+				Optional: true,
+			},
+			"request_timeout": schema.StringAttribute{
+				Description: "Timeout for a single HTTP request, as a Go duration string. Defaults to 5m. " +
+					"A full roster replace carrying thousands of employees needs a generous value.",
+				Optional: true,
+			},
+			"max_retries": schema.Int64Attribute{
+				Description: "Number of times a retryable request failure is re-attempted. Defaults to 3.",
 				Optional:    true,
 			},
 		},
@@ -70,91 +89,109 @@ func (p *wellbeingProvider) Schema(_ context.Context, _ provider.SchemaRequest, 
 // Configure prepares a wellbeing API client for data sources and resources.
 func (p *wellbeingProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
 	var config wellbeingProviderModel
-	diags := req.Config.Get(ctx, &config)
-	resp.Diagnostics.Append(diags...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if config.Host.IsUnknown() {
+	unknownAttributes := map[string]bool{
+		"host":            config.Host.IsUnknown(),
+		"token":           config.Token.IsUnknown(),
+		"company_id":      config.CompanyID.IsUnknown(),
+		"request_timeout": config.RequestTimeout.IsUnknown(),
+		"max_retries":     config.MaxRetries.IsUnknown(),
+	}
+	for name, unknown := range unknownAttributes {
+		if !unknown {
+			continue
+		}
 		resp.Diagnostics.AddAttributeError(
-			path.Root("host"),
-			"Unknown Wellbeing API Host",
-			"The provider cannot create the Wellbeing API client as there is an unknown configuration value for the Wellbeing API host. "+
-				"Either target apply the source of the value first, set the value statically in the configuration, or use the WELLBEING_HOST environment variable.",
+			path.Root(name),
+			"Unknown Wellbeing provider configuration value",
+			fmt.Sprintf("The provider cannot create the Wellbeing API client because %q is unknown at plan time. "+
+				"Either target apply the source of the value first, or set it statically.", name),
 		)
 	}
-
-	if config.Token.IsUnknown() {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("token"),
-			"Unknown Wellbeing API token",
-			"The provider cannot create the Wellbeing API client as there is an unknown configuration value for the Wellbeing API token. "+
-				"Either target apply the source of the value first, set the value statically in the configuration, or use the WELLBEING_TOKEN environment variable.",
-		)
-	}
-
-	if config.CompanyID.IsUnknown() {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("company_id"),
-			"Unknown Wellbeing Company ID",
-			"The provider cannot create the Wellbeing API client as there is an unknown configuration value for the Wellbeing Company ID. "+
-				"Either target apply the source of the value first, set the value statically in the configuration, or use the WELLBEING_COMPANY_ID environment variable.",
-		)
-	}
-
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	host := os.Getenv("WELLBEING_HOST")
-	token := os.Getenv("WELLBEING_TOKEN")
-	companyId := os.Getenv("WELLBEING_COMPANY_ID")
+	// Configuration wins over the environment; the environment wins over defaults.
+	host := firstNonEmpty(config.Host.ValueString(), os.Getenv("WELLBEING_HOST"), wellbeingclient.DefaultHost)
+	token := firstNonEmpty(config.Token.ValueString(), os.Getenv("WELLBEING_TOKEN"))
+	companyID := firstNonEmpty(config.CompanyID.ValueString(), os.Getenv("WELLBEING_COMPANY_ID"))
 
-	if !config.Host.IsNull() {
-		host = config.Host.ValueString()
-	}
-
-	if !config.Token.IsNull() {
-		token = config.Token.ValueString()
-	}
-
-	if !config.CompanyID.IsNull() {
-		companyId = config.CompanyID.ValueString()
-	}
-
-	if host == "" {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("host"),
-			"Missing Wellbeing API Host",
-			"The provider cannot create the Wellbeing API client as there is a missing or empty value for the Wellbeing API host. "+
-				"Set the host value in the configuration or use the WELLBEING_HOST environment variable. "+
-				"If either is already set, ensure the value is not empty.",
-		)
-	}
 	if token == "" {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("token"),
-			"Missing Wellbeing API Token",
-			"The provider cannot create the Wellbeing API client as there is a missing or empty value for the Wellbeing API token. "+
-				"Set the token value in the configuration or use the WELLBEING_TOKEN environment variable. "+
-				"If either is already set, ensure the value is not empty.",
+			"Missing Wellbeing API token",
+			"Set the token attribute or the WELLBEING_TOKEN environment variable. "+
+				"Generate one in the Wellbeing portal under Access control, on the user holding the HRIntegration role.",
 		)
 	}
-	if companyId == "" {
+	if companyID == "" {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("company_id"),
-			"Missing Wellbeing Company ID",
-			"The provider cannot create the Wellbeing API client as there is a missing or empty value for the Wellbeing Company ID. "+
-				"Set the token value in the configuration or use the WELLBEING_COMPANY_ID environment variable. "+
-				"If either is already set, ensure the value is not empty.",
+			"Missing Wellbeing company ID",
+			"Set the company_id attribute or the WELLBEING_COMPANY_ID environment variable. "+
+				"The Wellbeing portal displays it alongside the generated API token.",
 		)
 	}
-
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
+	options := []wellbeingclient.Option{
+		wellbeingclient.WithUserAgent("terraform-provider-wellbeing/" + p.version),
+	}
+
+	if !config.RequestTimeout.IsNull() {
+		timeout, err := time.ParseDuration(config.RequestTimeout.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("request_timeout"),
+				"Invalid request_timeout",
+				fmt.Sprintf("Could not parse %q as a Go duration (for example \"5m\" or \"90s\"): %s",
+					config.RequestTimeout.ValueString(), err),
+			)
+			return
+		}
+		options = append(options, wellbeingclient.WithTimeout(timeout))
+	}
+
+	if !config.MaxRetries.IsNull() {
+		if config.MaxRetries.ValueInt64() < 0 {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("max_retries"),
+				"Invalid max_retries",
+				"max_retries must be zero or greater.",
+			)
+			return
+		}
+		options = append(options, wellbeingclient.WithMaxRetries(int(config.MaxRetries.ValueInt64())))
+	}
+
+	client, err := wellbeingclient.NewClient(host, token, companyID, options...)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to create Wellbeing API client",
+			"An unexpected error occurred while constructing the Wellbeing API client.\n\n"+err.Error(),
+		)
+		return
+	}
+
+	resp.DataSourceData = client
+	resp.ResourceData = client
+}
+
+// firstNonEmpty returns the first value that is not the empty string.
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // DataSources defines the data sources implemented in the provider.
