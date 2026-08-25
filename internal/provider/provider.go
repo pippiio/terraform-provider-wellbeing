@@ -201,5 +201,7 @@ func (p *wellbeingProvider) DataSources(_ context.Context) []func() datasource.D
 
 // Resources defines the resources implemented in the provider.
 func (p *wellbeingProvider) Resources(_ context.Context) []func() resource.Resource {
-	return []func() resource.Resource{}
+	return []func() resource.Resource{
+		NewEmployeeRosterResource,
+	}
 }
