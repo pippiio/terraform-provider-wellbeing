@@ -30,6 +30,8 @@ The Wellbeing API has no per-employee endpoint. `PUT /Employee` replaces the ent
 
 Writes may be queued: the API returns `202 Accepted` and processes the import asynchronously, usually within minutes but occasionally up to an hour. The provider polls until the operation settles, so a successful `terraform apply` means the change actually landed. Tune the wait with a `timeouts` block.
 
+Large changes are guarded. `batch_limit_percent` defaults to `25`, the value the API documentation recommends configuring as the company's batch limit, and an apply touching that share of the roster or more fails before any request is sent. The API enforces the same rule server-side but never exposes the configured number, and it may reject an import only after a long queued wait. The check is skipped below 100 employees, matching the API, so a first import into an empty company is never blocked. Set it to `0` to turn the guard off.
+
 **Destroying the resource does not delete anyone.** The API has no delete operation, so `terraform destroy` removes the roster from state and leaves Wellbeing untouched, with a warning saying so. Use `terraform import wellbeing_employee_roster.this <company_id>` to adopt the roster back into state.
 
 > [!WARNING]

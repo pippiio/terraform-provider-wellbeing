@@ -23,9 +23,10 @@ The Wellbeing API has no per-employee endpoint: `PUT /Employee` replaces the who
 # resource owns every employee created through the API. Employees omitted here
 # are deleted by the API on the next apply.
 resource "wellbeing_employee_roster" "this" {
-  # Refuse to apply a change touching a quarter or more of the roster. Matches
-  # the batch limit configured for the company in the Wellbeing portal.
-  batch_limit_percent = 25
+  # batch_limit_percent defaults to 25, matching the value the Wellbeing
+  # documentation recommends configuring in the portal: an apply touching a
+  # quarter or more of the roster fails before anything is sent. Raise it if the
+  # company's configured limit is higher, or set it to 0 to disable the check.
 
   employee = {
     for employee in local.hr_export : employee.staff_number => {
@@ -60,7 +61,11 @@ resource "wellbeing_employee_roster" "this" {
 
 ### Optional
 
-- `batch_limit_percent` (Number) Optional plan-time guard mirroring the company's configured batch limit. When set, an apply that would change more than this percentage of the roster fails before any request is sent. The API applies the same rule server-side but does not expose the configured value, and a rejected import may only surface after a long queued wait. The check is skipped when the company has fewer than 100 employees, matching the API.
+- `batch_limit_percent` (Number) Guard mirroring the company's configured batch limit. An apply that would change this percentage or more of the roster fails before any request is sent. The API applies the same rule server-side but does not expose the configured value, and a rejected import may only surface after a long queued wait.
+
+Defaults to `25`, the value the Wellbeing API documentation recommends configuring in the portal. Raise it if the company's configured limit is higher, or set it to `0` to disable the check entirely.
+
+The check is skipped when the company has fewer than 100 employees, matching the API, so an initial import into an empty company is never blocked.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
