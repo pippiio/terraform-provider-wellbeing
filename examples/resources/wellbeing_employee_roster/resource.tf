@@ -2,9 +2,10 @@
 # resource owns every employee created through the API. Employees omitted here
 # are deleted by the API on the next apply.
 resource "wellbeing_employee_roster" "this" {
-  # Refuse to apply a change touching a quarter or more of the roster. Matches
-  # the batch limit configured for the company in the Wellbeing portal.
-  batch_limit_percent = 25
+  # batch_limit_percent defaults to 25, matching the value the Wellbeing
+  # documentation recommends configuring in the portal: an apply touching a
+  # quarter or more of the roster fails before anything is sent. Raise it if the
+  # company's configured limit is higher, or set it to 0 to disable the check.
 
   employee = {
     for employee in local.hr_export : employee.staff_number => {

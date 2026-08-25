@@ -10,12 +10,14 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/mapvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -25,7 +27,13 @@ import (
 	"github.com/techchapter/terraform-provider-wellbeing/internal/wellbeingclient"
 )
 
-const defaultOperationTimeout = 60 * time.Minute
+const (
+	defaultOperationTimeout = 60 * time.Minute
+
+	// defaultBatchLimitPercent matches the value the Wellbeing API documentation
+	// recommends configuring as the company's batch limit in the portal.
+	defaultBatchLimitPercent = 25
+)
 
 var phoneNumberPattern = regexp.MustCompile(`^\+[0-9]{6,20}$`)
 
@@ -72,12 +80,21 @@ func (r *employeeRosterResource) Schema(ctx context.Context, _ resource.SchemaRe
 				},
 			},
 			"batch_limit_percent": schema.Int64Attribute{
-				MarkdownDescription: "Optional plan-time guard mirroring the company's configured batch limit. " +
-					"When set, an apply that would change more than this percentage of the roster fails before " +
-					"any request is sent. The API applies the same rule server-side but does not expose the " +
-					"configured value, and a rejected import may only surface after a long queued wait. " +
-					"The check is skipped when the company has fewer than 100 employees, matching the API.",
+				MarkdownDescription: "Guard mirroring the company's configured batch limit. An apply that " +
+					"would change this percentage or more of the roster fails before any request is sent. " +
+					"The API applies the same rule server-side but does not expose the configured value, " +
+					"and a rejected import may only surface after a long queued wait.\n\n" +
+					"Defaults to `25`, the value the Wellbeing API documentation recommends configuring in " +
+					"the portal. Raise it if the company's configured limit is higher, or set it to `0` to " +
+					"disable the check entirely.\n\n" +
+					"The check is skipped when the company has fewer than 100 employees, matching the API, " +
+					"so an initial import into an empty company is never blocked.",
 				Optional: true,
+				Computed: true,
+				Default:  int64default.StaticInt64(defaultBatchLimitPercent),
+				Validators: []validator.Int64{
+					int64validator.AtLeast(0),
+				},
 			},
 			"employee": schema.MapNestedAttribute{
 				MarkdownDescription: "The complete set of employees, keyed by your internal `EmployeeID`.",
@@ -325,22 +342,23 @@ func (r *employeeRosterResource) applyRoster(ctx context.Context, plan *employee
 		payload = append(payload, employee)
 	}
 
-	if !plan.BatchLimitPercent.IsNull() {
+	// A limit of zero disables the guard; the attribute defaults to 25, so null
+	// only occurs for state written before the attribute gained a default.
+	if limit := int(plan.BatchLimitPercent.ValueInt64()); !plan.BatchLimitPercent.IsNull() && limit > 0 {
 		current, err := r.client.ListEmployees(ctx)
 		if err != nil {
 			addAPIErrorDiagnostic(diags, "Unable to read the current Wellbeing roster", err)
 			return
 		}
 
-		limit := int(plan.BatchLimitPercent.ValueInt64())
 		if batchLimitExceeded(len(current), len(payload), limit) {
 			diags.AddAttributeError(
 				path.Root("batch_limit_percent"),
 				"Change exceeds the configured batch limit",
 				fmt.Sprintf("Applying would change the roster from %d to %d employees, which is at or above the "+
 					"configured limit of %d%%. The Wellbeing API would reject or indefinitely queue this import. "+
-					"Apply the change in smaller steps, or raise batch_limit_percent if the company's configured "+
-					"limit is higher than the value set here.",
+					"Apply the change in smaller steps, raise batch_limit_percent if the company's configured "+
+					"limit is higher than the value set here, or set it to 0 to disable this check.",
 					len(current), len(payload), limit),
 			)
 			return

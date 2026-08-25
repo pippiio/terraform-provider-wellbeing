@@ -209,3 +209,136 @@ resource "wellbeing_employee_roster" "this" {
 		},
 	})
 }
+
+// seedRoster pre-populates the fake API so a test can exercise a change against
+// an existing headcount. The batch limit only applies at 100 employees or more.
+func seedRoster(fake *fakeRoster, count int) {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+
+	fake.employees = make([]wellbeingclient.Employee, 0, count)
+	for i := range count {
+		fake.employees = append(fake.employees, wellbeingclient.Employee{
+			EmployeeID:       fmt.Sprintf("seed-%d", i),
+			Firstname:        "Seed",
+			Lastname:         fmt.Sprintf("Number%d", i),
+			Email:            fmt.Sprintf("seed%d@shire.test", i),
+			EmploymentStatus: 0,
+		})
+	}
+}
+
+const twoEmployeeRoster = `
+resource "wellbeing_employee_roster" "this" {
+%s
+  employee = {
+    "emp-1" = {
+      firstname         = "Bilbo"
+      lastname          = "Baggins"
+      email             = "bilbo@shire.test"
+      employment_status = "active"
+    }
+    "emp-2" = {
+      firstname         = "Samwise"
+      lastname          = "Gamgee"
+      email             = "sam@shire.test"
+      employment_status = "active"
+    }
+  }
+}
+`
+
+func TestAccEmployeeRosterBatchLimitDefaultsTo25(t *testing.T) {
+	skipWithoutTerraform(t)
+
+	fake := &fakeRoster{}
+	srv := httptest.NewServer(fake.handler())
+	t.Cleanup(srv.Close)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				// batch_limit_percent is not set; the API documentation recommends 25.
+				Config: fakeProviderConfig(srv.URL) + fmt.Sprintf(twoEmployeeRoster, ""),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("wellbeing_employee_roster.this", "batch_limit_percent", "25"),
+					resource.TestCheckResourceAttr("wellbeing_employee_roster.this", "employee.%", "2"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccEmployeeRosterBatchLimitBlocksLargeChange(t *testing.T) {
+	skipWithoutTerraform(t)
+
+	fake := &fakeRoster{}
+	srv := httptest.NewServer(fake.handler())
+	t.Cleanup(srv.Close)
+
+	// Replacing 100 employees with 2 is a 98% change, far above the default 25%.
+	seedRoster(fake, 100)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      fakeProviderConfig(srv.URL) + fmt.Sprintf(twoEmployeeRoster, ""),
+				ExpectError: regexp.MustCompile(`exceeds the configured batch limit`),
+			},
+		},
+	})
+
+	// The guard must run before any write reaches the API.
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.puts != 0 {
+		t.Errorf("PUT count = %d, want 0 — the batch limit must block before writing", fake.puts)
+	}
+	if len(fake.employees) != 100 {
+		t.Errorf("roster size = %d, want the seeded 100 left untouched", len(fake.employees))
+	}
+}
+
+func TestAccEmployeeRosterBatchLimitZeroDisablesGuard(t *testing.T) {
+	skipWithoutTerraform(t)
+
+	fake := &fakeRoster{}
+	srv := httptest.NewServer(fake.handler())
+	t.Cleanup(srv.Close)
+
+	seedRoster(fake, 100)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				// The same 98% change succeeds once the guard is explicitly disabled.
+				Config: fakeProviderConfig(srv.URL) + fmt.Sprintf(twoEmployeeRoster, "  batch_limit_percent = 0\n"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("wellbeing_employee_roster.this", "batch_limit_percent", "0"),
+					resource.TestCheckResourceAttr("wellbeing_employee_roster.this", "employee.%", "2"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccEmployeeRosterBatchLimitRejectsNegative(t *testing.T) {
+	skipWithoutTerraform(t)
+
+	fake := &fakeRoster{}
+	srv := httptest.NewServer(fake.handler())
+	t.Cleanup(srv.Close)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      fakeProviderConfig(srv.URL) + fmt.Sprintf(twoEmployeeRoster, "  batch_limit_percent = -1\n"),
+				ExpectError: regexp.MustCompile(`(?s)batch_limit_percent.*must be at least 0`),
+			},
+		},
+	})
+}
