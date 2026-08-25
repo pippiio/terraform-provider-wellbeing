@@ -6,4 +6,6 @@ package tools
 //go:generate terraform fmt -recursive ../examples/
 
 // Generate documentation.
-//go:generate go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs generate --provider-dir .. -provider-name wellbeing
+// tfplugindocs is tracked as a tool dependency in go.mod, so this uses the
+// pinned version rather than whatever happens to be installed.
+//go:generate go tool tfplugindocs generate --provider-dir .. -provider-name wellbeing

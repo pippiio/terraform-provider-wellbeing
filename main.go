@@ -4,9 +4,10 @@ import (
 	"context"
 	"flag"
 	"log"
-	"github.com/techchapter/terraform-provider-wellbeing/internal/provider"
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
+
+	"github.com/techchapter/terraform-provider-wellbeing/internal/provider"
 )
 
 var (
