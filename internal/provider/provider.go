@@ -196,7 +196,13 @@ func firstNonEmpty(values ...string) string {
 
 // DataSources defines the data sources implemented in the provider.
 func (p *wellbeingProvider) DataSources(_ context.Context) []func() datasource.DataSource {
-	return []func() datasource.DataSource{}
+	return []func() datasource.DataSource{
+		NewAPICallsDataSource,
+		NewEmployeesDataSource,
+		NewEnabledLanguagesDataSource,
+		NewSurveyAnswersDataSource,
+		NewSurveyTemplatesDataSource,
+	}
 }
 
 // Resources defines the resources implemented in the provider.
@@ -204,4 +210,22 @@ func (p *wellbeingProvider) Resources(_ context.Context) []func() resource.Resou
 	return []func() resource.Resource{
 		NewEmployeeRosterResource,
 	}
+}
+
+// configureDataSourceClient extracts the shared client from provider data.
+func configureDataSourceClient(req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) *wellbeingclient.Client {
+	if req.ProviderData == nil {
+		return nil
+	}
+
+	client, ok := req.ProviderData.(*wellbeingclient.Client)
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Unexpected data source configure type",
+			fmt.Sprintf("Expected *wellbeingclient.Client, got %T. Please report this issue to the provider developers.", req.ProviderData),
+		)
+		return nil
+	}
+
+	return client
 }
