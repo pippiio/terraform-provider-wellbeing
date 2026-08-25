@@ -495,7 +495,8 @@ func TestAccEmployeesBatchLimitRejectsNegative(t *testing.T) {
 
 // TestAccEmployeesFromYAML exercises the shape this provider is expected to be
 // driven from: a company-wide people file decoded in Terraform, where
-// employment status is one entry in a flat roles list.
+// employment status and the Wellbeing dimensions are all derived from one flat
+// roles list.
 func TestAccEmployeesFromYAML(t *testing.T) {
 	skipWithoutTerraform(t)
 
@@ -511,19 +512,33 @@ func TestAccEmployeesFromYAML(t *testing.T) {
 locals {
   users = yamldecode(<<-YAML
     users:
+      mogens@example.dk:
+        name: Mogens Glistrup
+        phone: "+4513131313"
+        roles: [odense, consultant, intern, employee, vpn, on_leave]
+      ci@example.dk:
+        name: CI Robot
+        roles: [employee, vpn]
       mj@example.dk:
         name: Mogens Jensen
         phone: "+4512121212"
         roles: [copenhagen, partner, employee, vpn]
-      mogens@example.dk:
-        name: Mogens Glistrup
-        phone: "+4513131313"
-        roles: [copenhagen, intern, employee, vpn, on_leave]
   YAML
   ).users
 
-  locations = ["copenhagen", "aarhus"]
-  job_roles = ["partner", "manager", "consultant", "apprentice", "intern"]
+  # Order is precedence: the first candidate an employee holds wins.
+  dimension_candidates = {
+    Location = ["copenhagen", "odense", "aarhus"]
+    Role     = ["partner", "manager", "consultant", "apprentice", "intern"]
+  }
+
+  user_dimensions = {
+    for email, user in local.users : email => {
+      for dimension, candidates in local.dimension_candidates :
+      dimension => [for candidate in candidates : candidate if contains(user.roles, candidate)][0]
+      if length([for candidate in candidates : candidate if contains(user.roles, candidate)]) > 0
+    }
+  }
 }
 
 resource "wellbeing_employees" "this" {
@@ -535,27 +550,34 @@ resource "wellbeing_employees" "this" {
       id     = employee.key
       email  = employee.key
       name   = employee.value.name
-      phone  = employee.value.phone
+      phone  = try(employee.value.phone, null)
       active = !contains(employee.value.roles, "on_leave")
 
-      dimensions = {
-        Location = one([for r in employee.value.roles : r if contains(local.locations, r)])
-        Role     = one([for r in employee.value.roles : r if contains(local.job_roles, r)])
-      }
+      dimensions = local.user_dimensions[employee.key]
     }
   }
 }
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.#", "2"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.#", "3"),
+
 					// for_each over a map iterates in sorted key order.
 					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.id", "mogens@example.dk"),
+					// on_leave in the roles list drives active.
 					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.active", "false"),
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.dimensions.Location", "copenhagen"),
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.dimensions.Role", "intern"),
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.id", "mj@example.dk"),
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.active", "true"),
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.dimensions.Role", "partner"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.dimensions.Location", "odense"),
+					// Mogens holds both consultant and intern; candidate order wins.
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.dimensions.Role", "consultant"),
+
+					// No location or job role at all: the keys are dropped rather
+					// than set blank, and the empty map round trips as an empty map.
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.id", "ci@example.dk"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.dimensions.%", "0"),
+
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.2.id", "mj@example.dk"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.2.active", "true"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.2.dimensions.Location", "copenhagen"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.2.dimensions.Role", "partner"),
 				),
 			},
 		},

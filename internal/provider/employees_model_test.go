@@ -468,3 +468,33 @@ func TestBatchLimitExceeded(t *testing.T) {
 		})
 	}
 }
+
+func TestFromAPIEmployeePreservesExplicitlyEmptyDimensions(t *testing.T) {
+	t.Parallel()
+
+	// Deriving dimensions from a roles list yields {} for anyone matching no
+	// candidate. Config holds a known empty map while the API returns nothing,
+	// so collapsing to null here would diff against config forever.
+	prior := minimalModel()
+	prior.Dimensions = stringMap(t, map[string]string{})
+
+	api := wellbeingclient.Employee{
+		EmployeeID:       "mj@example.dk",
+		Firstname:        "Mogens",
+		Lastname:         "Jensen",
+		Email:            "mj@example.dk",
+		EmploymentStatus: 0,
+	}
+
+	got, diags := fromAPIEmployee(context.Background(), api, &prior)
+	if diags.HasError() {
+		t.Fatalf("fromAPIEmployee returned diagnostics: %v", diags)
+	}
+
+	if got.Dimensions.IsNull() {
+		t.Error("Dimensions = null, want an empty map to match the configured value")
+	}
+	if len(got.Dimensions.Elements()) != 0 {
+		t.Errorf("Dimensions = %v, want empty", got.Dimensions)
+	}
+}

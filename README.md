@@ -43,11 +43,33 @@ resource "wellbeing_employees" "this" {
 `employee` is a block, so entries are generated with `dynamic` rather than a `for` expression:
 
 ```terraform
+locals {
+  users = yamldecode(file("users.yaml")).users
+
+  # Which roles feed which Wellbeing dimension. Order is precedence: the first
+  # candidate an employee holds wins, so someone who is both consultant and
+  # intern is reported as consultant.
+  dimension_candidates = {
+    Location = ["copenhagen", "odense", "aarhus"]
+    Role     = ["partner", "manager", "consultant", "apprentice", "intern"]
+  }
+
+  # The matched value per dimension, per user. Dimensions the user holds no
+  # candidate role for are dropped rather than set empty.
+  user_dimensions = {
+    for email, user in local.users : email => {
+      for dimension, candidates in local.dimension_candidates :
+      dimension => [for candidate in candidates : candidate if contains(user.roles, candidate)][0]
+      if length([for candidate in candidates : candidate if contains(user.roles, candidate)]) > 0
+    }
+  }
+}
+
 resource "wellbeing_employees" "this" {
   default_country_code = "+45"
 
   dynamic "employee" {
-    for_each = yamldecode(file("users.yaml")).users
+    for_each = local.users
 
     content {
       id     = employee.key
@@ -56,26 +78,15 @@ resource "wellbeing_employees" "this" {
       phone  = try(employee.value.phone, null)
       active = !contains(employee.value.roles, "on_leave")
 
-      dimensions = {
-        Location = one([for r in employee.value.roles : r if contains(local.locations, r)])
-        Role     = one([for r in employee.value.roles : r if contains(local.job_roles, r)])
-      }
+      dimensions = local.user_dimensions[employee.key]
     }
   }
 }
 ```
 
-Wellbeing dimensions are key-value pairs, and the keys drive reporting and survey selection. A flat roles list mixing location, job function and system access has to be classified into those keys in HCL — the provider cannot tell which role means what.
+Given `roles: [copenhagen, partner, employee, vpn]` that yields `{ Location = "copenhagen", Role = "partner" }`.
 
-Generate a token in the Wellbeing portal under *Company* > *Integration* (turn on External Integration), then *Access control* > `<YourCompanyName> API User` > *Generate new api token*. The dialog also shows your company ID.
-
-## How the roster works
-
-The Wellbeing API has no per-employee endpoint. `PUT /Employee` replaces the entire set, and employees absent from the payload are deleted. The provider therefore models the workforce as one `wellbeing_employees` resource rather than one resource per person — a per-employee resource would delete everyone else on every create.
-
-Writes may be queued: the API returns `202 Accepted` and processes the import asynchronously, usually within minutes but occasionally up to an hour. The provider polls until the operation settles, so a successful `terraform apply` means the change actually landed. Tune the wait with a `timeouts` block.
-
-Large changes are guarded. `batch_limit_percent` defaults to `25`, the value the API documentation recommends configuring as the company's batch limit, and an apply touching that share of the roster or more fails before any request is sent. The API enforces the same rule server-side but never exposes the configured number, and it may reject an import only after a long queued wait. The check is skipped below 100 employees, matching the API, so a first import into an empty company is never blocked. Set it to `0` to turn the guard off.
+Wellbeing dimensions are key-value pairs, and the keys drive reporting and survey selection. A flat roles list mixing location, job function and system access has to be classified into those keys in HCL — the provider cannot tell that `copenhagen` is a Location and `vpn` is neither.
 
 **Destroying the resource does not delete anyone.** The API has no delete operation, so `terraform destroy` removes the roster from state and leaves Wellbeing untouched, with a warning saying so. Use `terraform import wellbeing_employees.this <company_id>` to adopt the roster back into state.
 

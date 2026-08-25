@@ -11,16 +11,38 @@
 #     mogens@example.dk:
 #       name: Mogens Glistrup
 #       phone: "+4513131313"
-#       roles: [copenhagen, intern, employee, vpn, on_leave]
+#       roles: [odense, consultant, intern, employee, vpn, on_leave]
+#     ci@example.dk:
+#       name: CI Robot
+#       roles: [employee, vpn]
 
 locals {
   users = yamldecode(file("${path.module}/users.yaml")).users
 
-  # A flat roles list mixes location, job function and system access, so the
-  # classification into Wellbeing dimension keys happens here rather than in the
-  # provider — only you know which role means what.
-  locations = ["copenhagen", "aarhus"]
-  job_roles = ["partner", "manager", "consultant", "apprentice", "intern"]
+  # Which roles feed which Wellbeing dimension.
+  #
+  # A flat roles list mixes location, job function and system access, and only
+  # you know which is which — the provider cannot infer that copenhagen is a
+  # Location. Declare the candidates for each dimension once here.
+  #
+  # Order is precedence: the first candidate an employee holds wins. Mogens is
+  # both a consultant and an intern, and is reported as a consultant because
+  # consultant is listed first.
+  dimension_candidates = {
+    Location = ["copenhagen", "odense", "aarhus"]
+    Role     = ["partner", "manager", "consultant", "apprentice", "intern"]
+  }
+
+  # The matched value per dimension, per user. Dimensions the user holds no
+  # candidate role for are dropped rather than set empty, so nobody is filed
+  # under a blank department.
+  user_dimensions = {
+    for email, user in local.users : email => {
+      for dimension, candidates in local.dimension_candidates :
+      dimension => [for candidate in candidates : candidate if contains(user.roles, candidate)][0]
+      if length([for candidate in candidates : candidate if contains(user.roles, candidate)]) > 0
+    }
+  }
 }
 
 resource "wellbeing_employees" "from_yaml" {
@@ -36,10 +58,10 @@ resource "wellbeing_employees" "from_yaml" {
       phone  = try(employee.value.phone, null)
       active = !contains(employee.value.roles, "on_leave")
 
-      dimensions = {
-        Location = one([for role in employee.value.roles : role if contains(local.locations, role)])
-        Role     = one([for role in employee.value.roles : role if contains(local.job_roles, role)])
-      }
+      # jr  -> { Location = "copenhagen", Role = "partner" }
+      # anne-> { Location = "odense",     Role = "consultant" }
+      # ci  -> { }  (no location or job role among its roles)
+      dimensions = local.user_dimensions[employee.key]
     }
   }
 }
