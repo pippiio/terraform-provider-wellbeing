@@ -197,7 +197,7 @@ func firstNonEmpty(values ...string) string {
 // DataSources defines the data sources implemented in the provider.
 func (p *wellbeingProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
-		NewAPICallsDataSource,
+		NewCompanyDataSource,
 		NewEmployeesDataSource,
 		NewEnabledLanguagesDataSource,
 		NewSurveyAnswersDataSource,

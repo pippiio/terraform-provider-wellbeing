@@ -14,9 +14,9 @@ func TestDataSourceSchemasAreValid(t *testing.T) {
 	t.Parallel()
 
 	constructors := map[string]func() datasource.DataSource{
+		"wellbeing_company":           NewCompanyDataSource,
 		"wellbeing_employees":         NewEmployeesDataSource,
 		"wellbeing_enabled_languages": NewEnabledLanguagesDataSource,
-		"wellbeing_api_calls":         NewAPICallsDataSource,
 		"wellbeing_survey_templates":  NewSurveyTemplatesDataSource,
 		"wellbeing_survey_answers":    NewSurveyAnswersDataSource,
 	}
@@ -102,6 +102,88 @@ data "wellbeing_employees" "this" {
 					resource.TestCheckResourceAttr("data.wellbeing_employees.this", "employees.%", "1"),
 					resource.TestCheckResourceAttr("data.wellbeing_employees.this", "employees.emp-1.fullname", "Bilbo Baggins"),
 				),
+			},
+		},
+	})
+}
+
+// fakeCompanyHandler serves the two endpoints the company data source composes:
+// the employee roster and the enabled languages list.
+func fakeCompanyHandler(fake *fakeRoster) http.Handler {
+	roster := fake.handler()
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1.0/Company/1000/Language/Enabled" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":1045,"label":"English","code":"en"},{"id":1041,"label":"Dansk","code":"da"}]`))
+			return
+		}
+		roster.ServeHTTP(w, r)
+	})
+}
+
+func TestAccCompanyDataSource(t *testing.T) {
+	skipWithoutTerraform(t)
+
+	fake := &fakeRoster{}
+	srv := httptest.NewServer(fakeCompanyHandler(fake))
+	t.Cleanup(srv.Close)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fakeProviderConfig(srv.URL) + `
+resource "wellbeing_employee_roster" "this" {
+  employee = {
+    "emp-1" = {
+      firstname         = "Bilbo"
+      lastname          = "Baggins"
+      email             = "bilbo@shire.test"
+      employment_status = "active"
+    }
+    "emp-2" = {
+      firstname         = "Samwise"
+      lastname          = "Gamgee"
+      email             = "sam@shire.test"
+      employment_status = "active"
+    }
+  }
+}
+
+data "wellbeing_company" "this" {
+  depends_on = [wellbeing_employee_roster.this]
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					// id comes from provider configuration, not from a request.
+					resource.TestCheckResourceAttr("data.wellbeing_company.this", "id", "1000"),
+					resource.TestCheckResourceAttr("data.wellbeing_company.this", "employee_count", "2"),
+					resource.TestCheckResourceAttr("data.wellbeing_company.this", "enabled_languages.#", "2"),
+					resource.TestCheckResourceAttr("data.wellbeing_company.this", "enabled_languages.0.code", "en"),
+					resource.TestCheckResourceAttr("data.wellbeing_company.this", "enabled_languages.0.id", "1045"),
+					resource.TestCheckResourceAttr("data.wellbeing_company.this", "enabled_languages.1.label", "Dansk"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccCompanyDataSourceEmptyRoster(t *testing.T) {
+	skipWithoutTerraform(t)
+
+	fake := &fakeRoster{}
+	srv := httptest.NewServer(fakeCompanyHandler(fake))
+	t.Cleanup(srv.Close)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fakeProviderConfig(srv.URL) + `
+data "wellbeing_company" "this" {}
+`,
+				Check: resource.TestCheckResourceAttr("data.wellbeing_company.this", "employee_count", "0"),
 			},
 		},
 	})
