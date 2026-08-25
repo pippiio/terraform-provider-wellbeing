@@ -1,2 +1,2 @@
-# terraform-provider-wellbeing
-A provider for wellbeing/howdy that enables management of employees and other resources through their API
+# tf-wellbeing-provider
+Terraform provider for  HR.ON Wellbeing (previously howdy.care)
