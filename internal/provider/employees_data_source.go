@@ -43,16 +43,18 @@ func (d *employeesDataSource) Schema(_ context.Context, _ datasource.SchemaReque
 				Computed:            true,
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
+						"id":                           schema.StringAttribute{Computed: true},
+						"name":                         schema.StringAttribute{Computed: true},
 						"firstname":                    schema.StringAttribute{Computed: true},
 						"lastname":                     schema.StringAttribute{Computed: true},
 						"email":                        schema.StringAttribute{Computed: true},
-						"employment_status":            schema.StringAttribute{Computed: true},
+						"active":                       schema.BoolAttribute{Computed: true},
 						"gender":                       schema.StringAttribute{Computed: true},
-						"phone_number":                 schema.StringAttribute{Computed: true},
+						"phone":                        schema.StringAttribute{Computed: true},
 						"job_title":                    schema.StringAttribute{Computed: true},
 						"invitation_date":              schema.StringAttribute{Computed: true},
 						"dimensions":                   schema.MapAttribute{Computed: true, ElementType: types.StringType},
-						"id":                           schema.Int64Attribute{Computed: true},
+						"wellbeing_id":                 schema.Int64Attribute{Computed: true},
 						"fullname":                     schema.StringAttribute{Computed: true},
 						"company_id":                   schema.Int64Attribute{Computed: true},
 						"external_id":                  schema.StringAttribute{Computed: true},
@@ -78,8 +80,19 @@ func (d *employeesDataSource) Read(ctx context.Context, _ datasource.ReadRequest
 		return
 	}
 
-	// No prior state exists for a data source, so invitation_date reads as null.
-	value, diags := rosterFromAPI(ctx, employees, map[string]employeeModel{})
+	// A data source has no prior config to echo, so fromAPIEmployee reports the
+	// API's own view of every field.
+	models := make(map[string]employeeModel, len(employees))
+	for _, employee := range employees {
+		model, diags := fromAPIEmployee(ctx, employee, nil)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		models[employee.EmployeeID] = model
+	}
+
+	value, diags := types.MapValueFrom(ctx, types.ObjectType{AttrTypes: employeeAttrTypes()}, models)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return

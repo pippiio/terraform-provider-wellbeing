@@ -83,24 +83,21 @@ func TestAccEmployeesDataSource(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config: fakeProviderConfig(srv.URL) + `
-resource "wellbeing_employee_roster" "this" {
-  employee = {
-    "emp-1" = {
-      firstname         = "Bilbo"
-      lastname          = "Baggins"
-      email             = "bilbo@shire.test"
-      employment_status = "active"
-    }
+resource "wellbeing_employees" "this" {
+  employee {
+    id    = "jr"
+    name  = "Joachim Rørbøl"
+    email = "jr@techchapter.com"
   }
 }
 
 data "wellbeing_employees" "this" {
-  depends_on = [wellbeing_employee_roster.this]
+  depends_on = [wellbeing_employees.this]
 }
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("data.wellbeing_employees.this", "employees.%", "1"),
-					resource.TestCheckResourceAttr("data.wellbeing_employees.this", "employees.emp-1.fullname", "Bilbo Baggins"),
+					resource.TestCheckResourceAttr("data.wellbeing_employees.this", "employees.jr.fullname", "Joachim Rørbøl"),
 				),
 			},
 		},
@@ -134,25 +131,22 @@ func TestAccCompanyDataSource(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config: fakeProviderConfig(srv.URL) + `
-resource "wellbeing_employee_roster" "this" {
-  employee = {
-    "emp-1" = {
-      firstname         = "Bilbo"
-      lastname          = "Baggins"
-      email             = "bilbo@shire.test"
-      employment_status = "active"
-    }
-    "emp-2" = {
-      firstname         = "Samwise"
-      lastname          = "Gamgee"
-      email             = "sam@shire.test"
-      employment_status = "active"
-    }
+resource "wellbeing_employees" "this" {
+  employee {
+    id    = "jr"
+    name  = "Joachim Rørbøl"
+    email = "jr@techchapter.com"
+  }
+
+  employee {
+    id    = "anne"
+    name  = "Anne Lysa"
+    email = "anne@techchapter.com"
   }
 }
 
 data "wellbeing_company" "this" {
-  depends_on = [wellbeing_employee_roster.this]
+  depends_on = [wellbeing_employees.this]
 }
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(

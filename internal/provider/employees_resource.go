@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -35,40 +36,40 @@ const (
 	defaultBatchLimitPercent = 25
 )
 
-var phoneNumberPattern = regexp.MustCompile(`^\+[0-9]{6,20}$`)
-
 var (
-	_ resource.Resource                = &employeeRosterResource{}
-	_ resource.ResourceWithConfigure   = &employeeRosterResource{}
-	_ resource.ResourceWithImportState = &employeeRosterResource{}
+	_ resource.Resource                   = &employeesResource{}
+	_ resource.ResourceWithConfigure      = &employeesResource{}
+	_ resource.ResourceWithImportState    = &employeesResource{}
+	_ resource.ResourceWithValidateConfig = &employeesResource{}
 )
 
-// NewEmployeeRosterResource returns the roster resource.
-func NewEmployeeRosterResource() resource.Resource {
-	return &employeeRosterResource{}
+// NewEmployeesResource returns the employees resource.
+func NewEmployeesResource() resource.Resource {
+	return &employeesResource{}
 }
 
-type employeeRosterResource struct {
+type employeesResource struct {
 	client *wellbeingclient.Client
 }
 
-type employeeRosterModel struct {
-	ID                types.String   `tfsdk:"id"`
-	BatchLimitPercent types.Int64    `tfsdk:"batch_limit_percent"`
-	Employee          types.Map      `tfsdk:"employee"`
-	Timeouts          timeouts.Value `tfsdk:"timeouts"`
+type employeesResourceModel struct {
+	ID                 types.String    `tfsdk:"id"`
+	BatchLimitPercent  types.Int64     `tfsdk:"batch_limit_percent"`
+	DefaultCountryCode types.String    `tfsdk:"default_country_code"`
+	Employee           []employeeModel `tfsdk:"employee"`
+	Timeouts           timeouts.Value  `tfsdk:"timeouts"`
 }
 
-func (r *employeeRosterResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_employee_roster"
+func (r *employeesResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_employees"
 }
 
-func (r *employeeRosterResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *employeesResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages the company's entire employee roster.\n\n" +
 			"The Wellbeing API has no per-employee endpoint: `PUT /Employee` replaces the whole set, " +
 			"and employees absent from the payload are deleted. This resource therefore owns every " +
-			"employee created through the API, and there is deliberately no `wellbeing_employee` resource.\n\n" +
+			"employee created through the API, and there is deliberately no single-employee resource.\n\n" +
 			"~> **Destroying this resource does not delete anyone.** Terraform forgets the roster and " +
 			"leaves Wellbeing untouched. Use `terraform import` to adopt an existing roster back into state.",
 		Attributes: map[string]schema.Attribute{
@@ -77,6 +78,18 @@ func (r *employeeRosterResource) Schema(ctx context.Context, _ resource.SchemaRe
 				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"default_country_code": schema.StringAttribute{
+				MarkdownDescription: "Country code prefixed to any `phone` that does not already start with `+`, " +
+					"for example `+45`. Lets employees carry national numbers while the API receives the " +
+					"international form it requires.\n\n" +
+					"Digits are not otherwise rewritten: a national trunk prefix is left alone, because " +
+					"stripping it correctly depends on the country. Without this set, every `phone` must " +
+					"already be in full international form.",
+				Optional: true,
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(countryCodePattern, "must be a plus sign followed by 1 to 4 digits, for example +45"),
 				},
 			},
 			"batch_limit_percent": schema.Int64Attribute{
@@ -96,44 +109,57 @@ func (r *employeeRosterResource) Schema(ctx context.Context, _ resource.SchemaRe
 					int64validator.AtLeast(0),
 				},
 			},
-			"employee": schema.MapNestedAttribute{
-				MarkdownDescription: "The complete set of employees, keyed by your internal `EmployeeID`.",
-				Required:            true,
-				Validators: []validator.Map{
-					mapvalidator.KeysAre(stringvalidator.LengthAtMost(50)),
-				},
-				NestedObject: schema.NestedAttributeObject{
+		},
+		Blocks: map[string]schema.Block{
+			"employee": schema.ListNestedBlock{
+				MarkdownDescription: "One block per employee. The complete set of blocks is the roster; " +
+					"anyone omitted is deleted by the API on the next apply.",
+				NestedObject: schema.NestedBlockObject{
 					Attributes: map[string]schema.Attribute{
+						"id": schema.StringAttribute{
+							MarkdownDescription: "Your internal primary key for this employee, unique within the roster. " +
+								"Sent to the API as `EmployeeID`.",
+							Required:   true,
+							Validators: []validator.String{stringvalidator.LengthAtMost(50)},
+						},
+						"name": schema.StringAttribute{
+							MarkdownDescription: "Full name, split at the first space into first and last name. " +
+								"`\"Anna Van der Berg\"` becomes `Anna` / `Van der Berg`.\n\n" +
+								"Set `firstname` or `lastname` to override the split for a name it gets wrong. " +
+								"A single-word name leaves no surname, which the API rejects, so those need an " +
+								"explicit `lastname`.",
+							Optional: true,
+						},
 						"firstname": schema.StringAttribute{
-							MarkdownDescription: "First name of the employee.",
-							Required:            true,
-							Validators:          []validator.String{stringvalidator.LengthAtMost(150)},
+							MarkdownDescription: "First name, overriding whatever `name` would split to.",
+							Optional:            true,
+							Validators:          []validator.String{stringvalidator.LengthAtMost(maxNameLength)},
 						},
 						"lastname": schema.StringAttribute{
-							MarkdownDescription: "Last name of the employee.",
-							Required:            true,
-							Validators:          []validator.String{stringvalidator.LengthAtMost(150)},
+							MarkdownDescription: "Last name, overriding whatever `name` would split to.",
+							Optional:            true,
+							Validators:          []validator.String{stringvalidator.LengthAtMost(maxNameLength)},
 						},
 						"email": schema.StringAttribute{
 							MarkdownDescription: "E-mail address. Must be unique across the company.",
 							Required:            true,
 						},
-						"employment_status": schema.StringAttribute{
-							MarkdownDescription: "Employment status. One of `active` or `on_leave`.",
-							Required:            true,
-							Validators:          []validator.String{stringvalidator.OneOf(employmentStatusValues()...)},
+						"phone": schema.StringAttribute{
+							MarkdownDescription: "Cell phone. Either full international form (`+4523232323`) or a " +
+								"national number that `default_country_code` completes. Must be unique.",
+							Optional: true,
+						},
+						"active": schema.BoolAttribute{
+							MarkdownDescription: "Whether the employee is actively employed. `false` marks them " +
+								"as on leave. Defaults to `true`.",
+							Optional: true,
+							Computed: true,
+							Default:  booldefault.StaticBool(true),
 						},
 						"gender": schema.StringAttribute{
 							MarkdownDescription: "Gender. One of `female`, `male` or `unknown`.",
 							Optional:            true,
 							Validators:          []validator.String{stringvalidator.OneOf(genderValues()...)},
-						},
-						"phone_number": schema.StringAttribute{
-							MarkdownDescription: "Cell phone in international format, for example `+4523232323`. Must be unique.",
-							Optional:            true,
-							Validators: []validator.String{
-								stringvalidator.RegexMatches(phoneNumberPattern, "must be a plus sign followed by 6 to 20 digits, for example +4523232323"),
-							},
 						},
 						"job_title": schema.StringAttribute{
 							MarkdownDescription: "Role in the company, for example `Sales Manager`.",
@@ -148,9 +174,11 @@ func (r *employeeRosterResource) Schema(ctx context.Context, _ resource.SchemaRe
 						},
 						"dimensions": schema.MapAttribute{
 							MarkdownDescription: "Reporting dimensions such as `Department`, `Role`, " +
-								"`ImmediateManager`, `Location` or `Division`. The API accepts the first three " +
-								"as dedicated fields and returns all of them nested here; the provider handles " +
-								"that difference, so configure everything through this map.",
+								"`ImmediateManager`, `Location` or `Division`. The keys are what Wellbeing " +
+								"reports group by and what survey selection rules filter on.\n\n" +
+								"The API accepts the first three as dedicated fields and returns all of them " +
+								"nested here; the provider handles that difference, so configure everything " +
+								"through this map.",
 							Optional:    true,
 							ElementType: types.StringType,
 							Validators: []validator.Map{
@@ -158,7 +186,7 @@ func (r *employeeRosterResource) Schema(ctx context.Context, _ resource.SchemaRe
 							},
 						},
 
-						"id": schema.Int64Attribute{
+						"wellbeing_id": schema.Int64Attribute{
 							MarkdownDescription: "Wellbeing's internal numeric employee ID.",
 							Computed:            true,
 						},
@@ -193,14 +221,69 @@ func (r *employeeRosterResource) Schema(ctx context.Context, _ resource.SchemaRe
 					},
 				},
 			},
-		},
-		Blocks: map[string]schema.Block{
 			"timeouts": timeouts.Block(ctx, timeouts.Opts{Create: true, Update: true}),
 		},
 	}
 }
 
-func (r *employeeRosterResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+// ValidateConfig reports name, phone and duplicate-id problems at plan time
+// rather than after an apply has already started talking to the API.
+func (r *employeesResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var config employeesResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	countryCode := config.DefaultCountryCode.ValueString()
+	if config.DefaultCountryCode.IsUnknown() {
+		// Cannot judge bare phone numbers without knowing the prefix.
+		countryCode = ""
+	}
+
+	seen := make(map[string]int, len(config.Employee))
+
+	for index, employee := range config.Employee {
+		blockPath := path.Root("employee").AtListIndex(index)
+
+		if !employee.ID.IsNull() && !employee.ID.IsUnknown() {
+			identifier := employee.ID.ValueString()
+			if previous, duplicated := seen[identifier]; duplicated {
+				resp.Diagnostics.AddAttributeError(
+					blockPath.AtName("id"),
+					"Duplicate employee id",
+					fmt.Sprintf("Employee id %q is already used by the block at index %d. "+
+						"Each id must be unique: it is the key the Wellbeing API matches employees on, "+
+						"so duplicates would silently collapse into a single employee.",
+						identifier, previous),
+				)
+			} else {
+				seen[identifier] = index
+			}
+		}
+
+		// Name resolution needs both the split source and any overrides to be
+		// known; skip the check when they are not resolved yet.
+		if employee.Name.IsUnknown() || employee.Firstname.IsUnknown() || employee.Lastname.IsUnknown() {
+			continue
+		}
+		if _, _, diags := resolveName(employee); diags.HasError() {
+			for _, d := range diags.Errors() {
+				resp.Diagnostics.AddAttributeError(blockPath.AtName("name"), d.Summary(), d.Detail())
+			}
+		}
+
+		if raw := optionalString(employee.Phone); raw != nil && !config.DefaultCountryCode.IsUnknown() {
+			if _, diags := normalizePhone(*raw, countryCode, employee.ID.ValueString()); diags.HasError() {
+				for _, d := range diags.Errors() {
+					resp.Diagnostics.AddAttributeError(blockPath.AtName("phone"), d.Summary(), d.Detail())
+				}
+			}
+		}
+	}
+}
+
+func (r *employeesResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -217,8 +300,8 @@ func (r *employeeRosterResource) Configure(_ context.Context, req resource.Confi
 	r.client = client
 }
 
-func (r *employeeRosterResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan employeeRosterModel
+func (r *employeesResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan employeesResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -233,7 +316,7 @@ func (r *employeeRosterResource) Create(ctx context.Context, req resource.Create
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	r.applyRoster(ctx, &plan, &resp.Diagnostics)
+	r.applyEmployees(ctx, &plan, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -241,39 +324,33 @@ func (r *employeeRosterResource) Create(ctx context.Context, req resource.Create
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *employeeRosterResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var state employeeRosterModel
+func (r *employeesResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state employeesResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	prior, diags := rosterToModels(ctx, state.Employee)
-	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	employees, err := r.client.ListEmployees(ctx)
 	if err != nil {
-		addAPIErrorDiagnostic(&resp.Diagnostics, "Unable to read Wellbeing employee roster", err)
+		addAPIErrorDiagnostic(&resp.Diagnostics, "Unable to read Wellbeing employees", err)
 		return
 	}
 
-	value, diags := rosterFromAPI(ctx, employees, prior)
+	refreshed, diags := employeesFromAPIOrdered(ctx, employees, state.Employee)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	state.Employee = value
+	state.Employee = refreshed
 	state.ID = types.StringValue(r.client.CompanyID())
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-func (r *employeeRosterResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan employeeRosterModel
+func (r *employeesResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan employeesResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -288,7 +365,7 @@ func (r *employeeRosterResource) Update(ctx context.Context, req resource.Update
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	r.applyRoster(ctx, &plan, &resp.Diagnostics)
+	r.applyEmployees(ctx, &plan, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -301,8 +378,8 @@ func (r *employeeRosterResource) Update(ctx context.Context, req resource.Update
 // The API has no delete endpoint; the only way to remove employees is to PUT a
 // roster that omits them, which would wipe the entire workforce with no way to
 // undo it. Destroying is therefore a state-only operation.
-func (r *employeeRosterResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var state employeeRosterModel
+func (r *employeesResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state employeesResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -313,33 +390,36 @@ func (r *employeeRosterResource) Delete(ctx context.Context, req resource.Delete
 		fmt.Sprintf("Terraform has removed this roster from state, but all %d employees remain live in Wellbeing. "+
 			"The API provides no delete operation, so the provider does not attempt one. "+
 			"To manage this roster with Terraform again, run terraform import.",
-			len(state.Employee.Elements()),
+			len(state.Employee),
 		),
 	)
 }
 
-func (r *employeeRosterResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	// The import ID is the company ID. Read fills in the roster itself.
+func (r *employeesResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// The import ID is the company ID. Read fills in the employees themselves.
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-// applyRoster pushes the planned roster to the API, waits for a queued import to
-// finish, and refreshes the plan's computed attributes from the result.
-func (r *employeeRosterResource) applyRoster(ctx context.Context, plan *employeeRosterModel, diags *diag.Diagnostics) {
-	planned, convertDiags := rosterToModels(ctx, plan.Employee)
-	diags.Append(convertDiags...)
-	if diags.HasError() {
-		return
-	}
+// applyEmployees pushes the planned roster to the API, waits for a queued import
+// to finish, and refreshes the plan's computed attributes from the result.
+func (r *employeesResource) applyEmployees(ctx context.Context, plan *employeesResourceModel, diags *diag.Diagnostics) {
+	countryCode := plan.DefaultCountryCode.ValueString()
+
+	// Sort by id so the payload is stable regardless of block order; the API
+	// treats the roster as a set, so ordering carries no meaning to it.
+	planned := slices.Clone(plan.Employee)
+	slices.SortFunc(planned, func(a, b employeeModel) int {
+		return strings.Compare(a.ID.ValueString(), b.ID.ValueString())
+	})
 
 	payload := make([]wellbeingclient.Employee, 0, len(planned))
-	for _, employeeID := range slices.Sorted(maps.Keys(planned)) {
-		employee, employeeDiags := toAPIEmployee(ctx, employeeID, planned[employeeID])
+	for _, employee := range planned {
+		converted, employeeDiags := toAPIEmployee(ctx, employee, countryCode)
 		diags.Append(employeeDiags...)
 		if diags.HasError() {
 			return
 		}
-		payload = append(payload, employee)
+		payload = append(payload, converted)
 	}
 
 	// A limit of zero disables the guard; the attribute defaults to 25, so null
@@ -390,60 +470,70 @@ func (r *employeeRosterResource) applyRoster(ctx context.Context, plan *employee
 		}
 	}
 
-	// Refresh so computed attributes reflect what the API actually stored.
+	// Refresh so computed attributes reflect what the API actually stored,
+	// keeping the configured block order.
 	employees, err := r.client.ListEmployees(ctx)
 	if err != nil {
 		addAPIErrorDiagnostic(diags, "Unable to read back the Wellbeing employee roster", err)
 		return
 	}
 
-	value, refreshDiags := rosterFromAPI(ctx, employees, planned)
+	refreshed, refreshDiags := employeesFromAPIOrdered(ctx, employees, plan.Employee)
 	diags.Append(refreshDiags...)
 	if diags.HasError() {
 		return
 	}
 
-	plan.Employee = value
+	plan.Employee = refreshed
 	plan.ID = types.StringValue(r.client.CompanyID())
 }
 
-// rosterToModels decodes the employee map attribute into Go values.
-func rosterToModels(ctx context.Context, value types.Map) (map[string]employeeModel, diag.Diagnostics) {
-	models := map[string]employeeModel{}
-	if value.IsNull() || value.IsUnknown() {
-		return models, nil
-	}
-
-	diags := value.ElementsAs(ctx, &models, false)
-	return models, diags
-}
-
-// rosterFromAPI rebuilds the employee map attribute from a GET response. prior
-// supplies values the API never returns, such as invitation_date.
-func rosterFromAPI(ctx context.Context, employees []wellbeingclient.Employee, prior map[string]employeeModel) (types.Map, diag.Diagnostics) {
+// employeesFromAPIOrdered rebuilds the employee blocks from a GET response while
+// preserving the configured order.
+//
+// Order matters only to Terraform: a list block that came back in a different
+// order than it was written would diff on every plan. Employees the API returns
+// that config does not mention are appended in id order, so they surface as
+// drift the next plan removes.
+func employeesFromAPIOrdered(ctx context.Context, apiEmployees []wellbeingclient.Employee, prior []employeeModel) ([]employeeModel, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
-	elementType := types.ObjectType{AttrTypes: employeeAttrTypes()}
-	models := make(map[string]employeeModel, len(employees))
-
-	for _, employee := range employees {
-		var previous *employeeModel
-		if existing, ok := prior[employee.EmployeeID]; ok {
-			previous = &existing
-		}
-
-		model, employeeDiags := fromAPIEmployee(ctx, employee, previous)
-		diags.Append(employeeDiags...)
-		if diags.HasError() {
-			return types.MapNull(elementType), diags
-		}
-
-		models[employee.EmployeeID] = model
+	remaining := make(map[string]wellbeingclient.Employee, len(apiEmployees))
+	for _, employee := range apiEmployees {
+		remaining[employee.EmployeeID] = employee
 	}
 
-	value, mapDiags := types.MapValueFrom(ctx, elementType, models)
-	diags.Append(mapDiags...)
-	return value, diags
+	result := make([]employeeModel, 0, len(apiEmployees))
+
+	for i := range prior {
+		identifier := prior[i].ID.ValueString()
+
+		employee, ok := remaining[identifier]
+		if !ok {
+			// Configured but absent from the API: dropped upstream, so let it
+			// disappear from state and be recreated by the next apply.
+			continue
+		}
+		delete(remaining, identifier)
+
+		model, employeeDiags := fromAPIEmployee(ctx, employee, &prior[i])
+		diags.Append(employeeDiags...)
+		if diags.HasError() {
+			return nil, diags
+		}
+		result = append(result, model)
+	}
+
+	for _, identifier := range slices.Sorted(maps.Keys(remaining)) {
+		model, employeeDiags := fromAPIEmployee(ctx, remaining[identifier], nil)
+		diags.Append(employeeDiags...)
+		if diags.HasError() {
+			return nil, diags
+		}
+		result = append(result, model)
+	}
+
+	return result, diags
 }
 
 // addAPIErrorDiagnostic renders an APIError as one diagnostic per validation
