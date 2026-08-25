@@ -43,10 +43,6 @@ func employmentStatusFromAPI(code int) (string, bool) {
 	return lookupName(employmentStatusCodes, code)
 }
 
-func employmentStatusValues() []string {
-	return sortedKeys(employmentStatusCodes)
-}
-
 func lookupName(codes map[string]int, code int) (string, bool) {
 	for name, candidate := range codes {
 		if candidate == code {

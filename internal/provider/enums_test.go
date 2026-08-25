@@ -96,15 +96,3 @@ func TestEmploymentStatusRoundTrip(t *testing.T) {
 		})
 	}
 }
-
-func TestEmploymentStatusValues(t *testing.T) {
-	t.Parallel()
-
-	got := employmentStatusValues()
-	if len(got) != 2 {
-		t.Fatalf("employmentStatusValues() = %v, want 2 entries", got)
-	}
-	if !slices.IsSorted(got) {
-		t.Errorf("employmentStatusValues() = %v, want sorted output", got)
-	}
-}
