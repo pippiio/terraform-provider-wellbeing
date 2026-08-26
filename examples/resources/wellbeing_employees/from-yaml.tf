@@ -4,15 +4,15 @@
 #
 # users.yaml:
 #   users:
-#     jr@techchapter.com:
-#       name: Joachim Rørbøl
-#       phone: "+4527287178"
-#       roles: [copenhagen, partner, employee, vpn]
-#     anne@techchapter.com:
-#       name: Anne Lysa
-#       phone: "+4531350109"
-#       roles: [odense, consultant, intern, employee, vpn, on_leave]
-#     ci@techchapter.com:
+#     mj@example.dk:
+#       name: Mogens Jensen
+#       phone: "+4512121212"
+#       roles: [copenhagen]
+#     rds@example.dk:
+#       name: Rosario de Silva
+#       phone: "+4513131313"
+#       roles: [odense, on_leave]
+#     ci@example.dk:
 #       name: CI Robot
 #       roles: [employee, vpn]
 

@@ -124,7 +124,7 @@ func (r *employeesResource) Schema(ctx context.Context, _ resource.SchemaRequest
 						},
 						"name": schema.StringAttribute{
 							MarkdownDescription: "Full name, split at the first space into first and last name. " +
-								"`\"Anna Van der Berg\"` becomes `Anna` / `Van der Berg`.\n\n" +
+								"`\"Rosario de Silva\"` becomes `Rosario` / `de Silva`.\n\n" +
 								"Set `firstname` or `lastname` to override the split for a name it gets wrong. " +
 								"A single-word name leaves no surname, which the API rejects, so those need an " +
 								"explicit `lastname`.",
@@ -145,7 +145,7 @@ func (r *employeesResource) Schema(ctx context.Context, _ resource.SchemaRequest
 							Required:            true,
 						},
 						"phone": schema.StringAttribute{
-							MarkdownDescription: "Cell phone. Either full international form (`+4523232323`) or a " +
+							MarkdownDescription: "Cell phone. Either full international form (`+4512345678`) or a " +
 								"national number that `default_country_code` completes. Must be unique.",
 							Optional: true,
 						},

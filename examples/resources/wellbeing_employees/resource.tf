@@ -12,40 +12,38 @@ resource "wellbeing_employees" "this" {
   # company's configured limit is higher, or set it to 0 to disable the check.
 
   employee {
-    id    = "jr"
-    name  = "Joachim Rørbøl"
-    email = "jr@techchapter.com"
-    phone = "27287178"
+    id    = "mj"
+    name  = "Mogens Jensen"
+    email = "mj@example.dk"
+    phone = "12121212"
 
     # Dimension keys are what Wellbeing reports group by and what survey
     # selection rules filter on.
     dimensions = {
       Location = "copenhagen"
-      Role     = "partner"
     }
   }
 
   employee {
-    id     = "anne"
-    name   = "Anne Lysa"
-    email  = "anne@techchapter.com"
-    phone  = "+4531350109"
+    id     = "mogens"
+    name   = "Mogens Glistrup"
+    email  = "mogens@example.dk"
+    phone  = "+4513131313"
     active = false # on leave
-
     dimensions = {
       Location = "copenhagen"
-      Role     = "intern"
     }
   }
 
   # name is split at the first space, so a single-word name needs an explicit
   # lastname. The same override fixes any name the splitter gets wrong.
   employee {
-    id       = "tfn"
-    name     = "Thomas"
-    lastname = "Faurbye Nielsen"
-    email    = "tfn@techchapter.com"
+    id       = "rds"
+    name     = "Rosario"
+    lastname = "de Silva"
+    email    = "rds@example.dk"
   }
+
 
   timeouts {
     create = "60m"

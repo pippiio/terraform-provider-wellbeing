@@ -110,7 +110,7 @@ func seedRoster(fake *fakeRoster, count int) {
 			EmployeeID:       fmt.Sprintf("seed-%d", i),
 			Firstname:        "Seed",
 			Lastname:         fmt.Sprintf("Number%d", i),
-			Email:            fmt.Sprintf("seed%d@techchapter.com", i),
+			Email:            fmt.Sprintf("seed%d@example.dk", i),
 			EmploymentStatus: 0,
 		})
 	}
@@ -143,9 +143,9 @@ resource "wellbeing_employees" "this" {
 
   employee {
     id    = "jr"
-    name  = "Joachim Rørbøl"
-    email = "jr@techchapter.com"
-    phone = "27287178"
+    name  = "Mogens Jensen"
+    email = "mj@example.dk"
+    phone = "12121212"
 
     dimensions = {
       Location = "copenhagen"
@@ -157,13 +157,13 @@ resource "wellbeing_employees" "this" {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.#", "1"),
 					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.id", "jr"),
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.name", "Joachim Rørbøl"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.name", "Mogens Jensen"),
 					// active defaults to true.
 					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.active", "true"),
 					// The name was split for the API and echoed back as fullname.
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.fullname", "Joachim Rørbøl"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.fullname", "Mogens Jensen"),
 					// The bare phone stays as configured, not as normalised.
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.phone", "27287178"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.phone", "12121212"),
 					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.dimensions.Role", "consultant"),
 					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.dimensions.Location", "copenhagen"),
 					resource.TestCheckResourceAttr("wellbeing_employees.this", "id", "1000"),
@@ -178,33 +178,35 @@ resource "wellbeing_employees" "this" {
   default_country_code = "+45"
 
   employee {
-    id    = "jr"
-    name  = "Joachim Rørbøl"
-    email = "jr@techchapter.com"
-    phone = "27287178"
+    id    = "mj"
+    name  = "Mogens Jensen"
+    email = "mj@example.dk"
+    phone = "12121212"
 
     dimensions = {
       Location = "copenhagen"
-      Role     = "consultant"
     }
   }
 
   employee {
-    id     = "anne"
-    name   = "Anne Lysa"
-    email  = "anne@techchapter.com"
-    phone  = "+4531350109"
-    active = false
+    id     = "mogens"
+    name   = "Mogens Glistrup"
+    email  = "mogens@example.dk"
+    phone  = "+4513131313"
+    active = false # on leave
+    dimensions = {
+      Location = "copenhagen"
+    }
   }
 }
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.#", "2"),
 					// Block order is preserved across the refresh.
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.id", "jr"),
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.id", "anne"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.id", "mj"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.id", "mogens"),
 					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.active", "false"),
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.fullname", "Anne Lysa"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.fullname", "Mogens Glistrup"),
 				),
 			},
 		},
@@ -227,16 +229,16 @@ resource "wellbeing_employees" "this" {
   default_country_code = "+45"
 
   employee {
-    id    = "jr"
-    name  = "Joachim Rørbøl"
-    email = "jr@techchapter.com"
-    phone = "27287178"
+    id    = "mj"
+    name  = "Mogens Jensen"
+    email = "mj@example.dk"
+    phone = "12121212"
   }
 
   employee {
     id    = "abroad"
     name  = "Erika Mustermann"
-    email = "erika@techchapter.com"
+    email = "erika@example.dk"
     phone = "+4915112345678"
   }
 }
@@ -255,8 +257,8 @@ resource "wellbeing_employees" "this" {
 		}
 	}
 
-	if got := sent["jr"]; got != "+4527287178" {
-		t.Errorf("jr phone sent as %q, want the bare 27287178 prefixed with +45", got)
+	if got := sent["mj"]; got != "+4512121212" {
+		t.Errorf("jr phone sent as %q, want the bare 12121212 prefixed with +45", got)
 	}
 	if got := sent["abroad"]; got != "+4915112345678" {
 		t.Errorf("abroad phone sent as %q, want its own country code preserved", got)
@@ -277,9 +279,9 @@ func TestAccEmployeesRejectsSingleWordName(t *testing.T) {
 				Config: fakeProviderConfig(srv.URL) + `
 resource "wellbeing_employees" "this" {
   employee {
-    id    = "tfn"
-    name  = "Thomas"
-    email = "tfn@techchapter.com"
+    id    = "mj"
+    name  = "Mogens"
+    email = "mj@example.dk"
   }
 }
 `,
@@ -303,15 +305,15 @@ func TestAccEmployeesLastnameOverrideRescuesSingleWordName(t *testing.T) {
 				Config: fakeProviderConfig(srv.URL) + `
 resource "wellbeing_employees" "this" {
   employee {
-    id       = "tfn"
-    name     = "Thomas"
-    lastname = "Faurbye Nielsen"
-    email    = "tfn@techchapter.com"
+    id       = "mj"
+    name     = "Mogens"
+    lastname = "Jens Jensen"
+    email    = "tfn@example.dk"
   }
 }
 `,
 				Check: resource.TestCheckResourceAttr(
-					"wellbeing_employees.this", "employee.0.fullname", "Thomas Faurbye Nielsen"),
+					"wellbeing_employees.this", "employee.0.fullname", "Mogens Jens Jensen"),
 			},
 		},
 	})
@@ -331,10 +333,10 @@ func TestAccEmployeesRejectsBarePhoneWithoutCountryCode(t *testing.T) {
 				Config: fakeProviderConfig(srv.URL) + `
 resource "wellbeing_employees" "this" {
   employee {
-    id    = "jr"
-    name  = "Joachim Rørbøl"
-    email = "jr@techchapter.com"
-    phone = "27287178"
+    id    = "mj"
+    name  = "Mogens Jensen"
+    email = "mj@example.dk"
+    phone = "12121212"
   }
 }
 `,
@@ -358,15 +360,15 @@ func TestAccEmployeesRejectsDuplicateIDs(t *testing.T) {
 				Config: fakeProviderConfig(srv.URL) + `
 resource "wellbeing_employees" "this" {
   employee {
-    id    = "jr"
-    name  = "Joachim Rørbøl"
-    email = "jr@techchapter.com"
+    id    = "mj"
+    name  = "Mogens Jensen"
+    email = "mj@example.dk"
   }
 
   employee {
-    id    = "jr"
+    id    = "mj"
     name  = "Someone Else"
-    email = "else@techchapter.com"
+    email = "else@example.dk"
   }
 }
 `,
@@ -390,9 +392,9 @@ func TestAccEmployeesRejectsInvalidGender(t *testing.T) {
 				Config: fakeProviderConfig(srv.URL) + `
 resource "wellbeing_employees" "this" {
   employee {
-    id     = "jr"
-    name   = "Joachim Rørbøl"
-    email  = "jr@techchapter.com"
+    id     = "mj"
+    name   = "Mogens Jensen"
+    email  = "mj@example.dk"
     gender = "unspecified"
   }
 }
@@ -408,14 +410,14 @@ resource "wellbeing_employees" "this" {
 %s
   employee {
     id    = "jr"
-    name  = "Joachim Rørbøl"
-    email = "jr@techchapter.com"
+    name  = "Mogens Jensen"
+    email = "mj@example.dk"
   }
 
   employee {
-    id    = "anne"
-    name  = "Anne Lysa"
-    email = "anne@techchapter.com"
+    id    = "mogens"
+    name  = "Mogens Jensen"
+    email = "mogens@example.dk"
   }
 }
 `
@@ -512,16 +514,16 @@ func TestAccEmployeesFromYAML(t *testing.T) {
 locals {
   users = yamldecode(<<-YAML
     users:
-      anne@techchapter.com:
-        name: Anne Lysa
-        phone: "+4531350109"
+      mogens@example.dk:
+        name: Mogens Jensen
+        phone: "+4513131313"
         roles: [odense, consultant, intern, employee, vpn, on_leave]
-      ci@techchapter.com:
+      ci@example.dk:
         name: CI Robot
         roles: [employee, vpn]
-      jr@techchapter.com:
-        name: Joachim Rørbøl
-        phone: "+4527287178"
+      mj@example.dk:
+        name: Mogens Jensen
+        phone: "+4512121212"
         roles: [copenhagen, partner, employee, vpn]
   YAML
   ).users
@@ -562,7 +564,7 @@ resource "wellbeing_employees" "this" {
 					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.#", "3"),
 
 					// for_each over a map iterates in sorted key order.
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.id", "anne@techchapter.com"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.id", "mogens@example.dk"),
 					// on_leave in the roles list drives active.
 					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.active", "false"),
 					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.dimensions.Location", "odense"),
@@ -571,10 +573,10 @@ resource "wellbeing_employees" "this" {
 
 					// No location or job role at all: the keys are dropped rather
 					// than set blank, and the empty map round trips as an empty map.
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.id", "ci@techchapter.com"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.id", "ci@example.dk"),
 					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.dimensions.%", "0"),
 
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.2.id", "jr@techchapter.com"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.2.id", "mj@example.dk"),
 					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.2.active", "true"),
 					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.2.dimensions.Location", "copenhagen"),
 					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.2.dimensions.Role", "partner"),
