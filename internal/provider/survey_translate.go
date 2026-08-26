@@ -49,6 +49,12 @@ type surveyResourceModel struct {
 	LastPage       types.String `tfsdk:"last_page"`
 	LastPageTexts  types.Map    `tfsdk:"last_page_texts"`
 
+	// The cover and thankyou pages are questions as far as the API is
+	// concerned, so they carry server keys that must be resent on update. Omit
+	// them and each update appends a fresh pair of pages.
+	FirstPageKey types.String `tfsdk:"first_page_key"`
+	LastPageKey  types.String `tfsdk:"last_page_key"`
+
 	Frequency types.String `tfsdk:"frequency"`
 	Start     types.String `tfsdk:"start"`
 	End       types.String `tfsdk:"end"`
@@ -270,6 +276,7 @@ func toAPISurvey(
 		Texts:       welcomeTexts,
 		EditingLang: defaultLanguage,
 		Valid:       true,
+		Key:         plan.FirstPageKey.ValueString(),
 	})
 
 	for index, question := range plan.Question {
@@ -322,6 +329,7 @@ func toAPISurvey(
 		Texts:       thankYouTexts,
 		EditingLang: defaultLanguage,
 		Valid:       true,
+		Key:         plan.LastPageKey.ValueString(),
 	})
 
 	survey.Questions = questions
@@ -451,6 +459,7 @@ func fromAPISurvey(
 				surveyTextsByCode(api, apiQuestion.Key, wellbeingclient.SurveySlotContent), defaultLanguage)
 			diags.Append(pageDiags...)
 			model.FirstPage, model.FirstPageTexts = scalar, translations
+			model.FirstPageKey = types.StringValue(apiQuestion.Key)
 			continue
 
 		case wellbeingclient.StepTypeThankYou:
@@ -458,6 +467,7 @@ func fromAPISurvey(
 				surveyTextsByCode(api, apiQuestion.Key, wellbeingclient.SurveySlotContent), defaultLanguage)
 			diags.Append(pageDiags...)
 			model.LastPage, model.LastPageTexts = scalar, translations
+			model.LastPageKey = types.StringValue(apiQuestion.Key)
 			continue
 		}
 
@@ -561,8 +571,11 @@ func surveyContentFingerprint(model surveyResourceModel) string {
 	fmt.Fprintf(&b, "last=%s|%s\n", model.LastPage.ValueString(), mapFingerprint(model.LastPageTexts))
 
 	for _, question := range model.Question {
-		fmt.Fprintf(&b, "q:%s:%s:%s|%s\n",
-			question.Key.ValueString(),
+		// key is deliberately excluded. It is Optional+Computed, so at plan time
+		// it is unknown while state holds a concrete value — including it would
+		// make every plan look like a content change and replace the survey on
+		// any edit at all. Text and block order already capture identity.
+		fmt.Fprintf(&b, "q:%s:%s|%s\n",
 			question.Type.ValueString(),
 			question.Text.ValueString(),
 			mapFingerprint(question.Texts))
@@ -626,6 +639,10 @@ func classifySurveyChange(state, config surveyResourceModel) surveyChangeKind {
 // A question whose key is absent from state keeps an empty server key, which
 // tells the API to allocate a new one.
 func attachServerKeys(plan *surveyResourceModel, state surveyResourceModel) {
+	// The pages are questions to the API and carry keys of their own.
+	plan.FirstPageKey = state.FirstPageKey
+	plan.LastPageKey = state.LastPageKey
+
 	byKey := make(map[string]surveyQuestionModel, len(state.Question))
 	for _, question := range state.Question {
 		byKey[question.Key.ValueString()] = question
