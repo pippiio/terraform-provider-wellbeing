@@ -42,7 +42,7 @@ resource "wellbeing_employees" "this" {
     # selection rules filter on.
     dimensions = {
       Location = "copenhagen"
-      Role     = "partner"
+      
     }
   }
 
@@ -52,10 +52,8 @@ resource "wellbeing_employees" "this" {
     email  = "mogens@example.dk"
     phone  = "+4513131313"
     active = false # on leave
-
     dimensions = {
       Location = "copenhagen"
-      Role     = "intern"
     }
   }
 

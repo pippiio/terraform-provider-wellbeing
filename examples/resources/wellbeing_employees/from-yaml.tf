@@ -7,11 +7,11 @@
 #     mj@example.dk:
 #       name: Mogens Jensen
 #       phone: "+4512121212"
-#       roles: [copenhagen, partner, employee, vpn]
-#     mogens@example.dk:
-#       name: Mogens Glistrup
+#       roles: [copenhagen]
+#     rds@example.dk:
+#       name: Rosario de Silva
 #       phone: "+4513131313"
-#       roles: [odense, consultant, intern, employee, vpn, on_leave]
+#       roles: [odense, on_leave]
 #     ci@example.dk:
 #       name: CI Robot
 #       roles: [employee, vpn]

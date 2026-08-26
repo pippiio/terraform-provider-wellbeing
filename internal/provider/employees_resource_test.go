@@ -185,7 +185,6 @@ resource "wellbeing_employees" "this" {
 
     dimensions = {
       Location = "copenhagen"
-      Role     = "consultant"
     }
   }
 
@@ -194,7 +193,10 @@ resource "wellbeing_employees" "this" {
     name   = "Mogens Glistrup"
     email  = "mogens@example.dk"
     phone  = "+4513131313"
-    active = false
+    active = false # on leave
+    dimensions = {
+      Location = "copenhagen"
+    }
   }
 }
 `,
@@ -277,9 +279,9 @@ func TestAccEmployeesRejectsSingleWordName(t *testing.T) {
 				Config: fakeProviderConfig(srv.URL) + `
 resource "wellbeing_employees" "this" {
   employee {
-    id    = "rds"
-    name  = "Rosario"
-    email = "rds@example.dk"
+    id    = "mj"
+    name  = "Mogens"
+    email = "mj@example.dk"
   }
 }
 `,
@@ -303,15 +305,15 @@ func TestAccEmployeesLastnameOverrideRescuesSingleWordName(t *testing.T) {
 				Config: fakeProviderConfig(srv.URL) + `
 resource "wellbeing_employees" "this" {
   employee {
-    id       = "rds"
-    name     = "Rosario"
-    lastname = "de Silva"
+    id       = "mj"
+    name     = "Mogens"
+    lastname = "Jens Jensen"
     email    = "rds@example.dk"
   }
 }
 `,
 				Check: resource.TestCheckResourceAttr(
-					"wellbeing_employees.this", "employee.0.fullname", "Rosario de Silva"),
+					"wellbeing_employees.this", "employee.0.fullname", "Mogens Jens Jensen"),
 			},
 		},
 	})
@@ -414,7 +416,7 @@ resource "wellbeing_employees" "this" {
 
   employee {
     id    = "mogens"
-    name  = "Mogens Glistrup"
+    name  = "Mogens Jensen"
     email = "mogens@example.dk"
   }
 }
@@ -513,7 +515,7 @@ locals {
   users = yamldecode(<<-YAML
     users:
       mogens@example.dk:
-        name: Mogens Glistrup
+        name: Mogens Jensen
         phone: "+4513131313"
         roles: [odense, consultant, intern, employee, vpn, on_leave]
       ci@example.dk:
