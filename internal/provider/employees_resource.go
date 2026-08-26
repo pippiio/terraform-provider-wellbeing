@@ -412,7 +412,7 @@ func (r *employeesResource) ImportState(ctx context.Context, req resource.Import
 		)
 		return
 	}
-	
+
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 

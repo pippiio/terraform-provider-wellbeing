@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
 	"github.com/techchapter/terraform-provider-wellbeing/internal/wellbeingclient"
 )
@@ -563,24 +564,88 @@ resource "wellbeing_employees" "this" {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.#", "3"),
 
-					// for_each over a map iterates in sorted key order.
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.id", "mogens@example.dk"),
-					// on_leave in the roles list drives active.
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.active", "false"),
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.dimensions.Location", "odense"),
-					// Mogens holds both consultant and intern; candidate order wins.
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.dimensions.Role", "consultant"),
+					// for_each over a map iterates in sorted key order, so the
+					// blocks land as ci, mj, mogens rather than in the order the
+					// YAML happens to declare them.
 
 					// No location or job role at all: the keys are dropped rather
 					// than set blank, and the empty map round trips as an empty map.
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.id", "ci@example.dk"),
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.dimensions.%", "0"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.id", "ci@example.dk"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.0.dimensions.%", "0"),
 
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.2.id", "mj@example.dk"),
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.2.active", "true"),
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.2.dimensions.Location", "copenhagen"),
-					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.2.dimensions.Role", "partner"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.id", "mj@example.dk"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.active", "true"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.dimensions.Location", "copenhagen"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.1.dimensions.Role", "partner"),
+
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.2.id", "mogens@example.dk"),
+					// on_leave in the roles list drives active.
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.2.active", "false"),
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.2.dimensions.Location", "odense"),
+					// Mogens holds both consultant and intern; candidate order wins.
+					resource.TestCheckResourceAttr("wellbeing_employees.this", "employee.2.dimensions.Role", "consultant"),
 				),
+			},
+		},
+	})
+}
+
+func TestAccEmployeesImportRequiresMatchingCompanyID(t *testing.T) {
+	skipWithoutTerraform(t)
+
+	fake := &fakeRoster{}
+	srv := httptest.NewServer(fake.handler())
+	t.Cleanup(srv.Close)
+
+	config := fakeProviderConfig(srv.URL) + `
+resource "wellbeing_employees" "this" {
+  default_country_code = "+45"
+
+  employee {
+    id    = "mj"
+    name  = "Mogens Jensen"
+    email = "mj@example.dk"
+  }
+}
+`
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config},
+			{
+				// The provider is configured for company 1000. The client is
+				// scoped to that company, so importing another company's ID
+				// would silently adopt the configured company's roster under the
+				// wrong ID. It has to be refused instead.
+				Config:        config,
+				ResourceName:  "wellbeing_employees.this",
+				ImportState:   true,
+				ImportStateId: "2000",
+				ExpectError:   regexp.MustCompile(`Invalid Import ID`),
+			},
+			{
+				// The matching company ID imports the live roster.
+				Config:        config,
+				ResourceName:  "wellbeing_employees.this",
+				ImportState:   true,
+				ImportStateId: "1000",
+				ImportStateCheck: func(states []*terraform.InstanceState) error {
+					if len(states) != 1 {
+						return fmt.Errorf("expected 1 imported instance, got %d", len(states))
+					}
+					attrs := states[0].Attributes
+					if got := attrs["id"]; got != "1000" {
+						return fmt.Errorf("id = %q, want %q", got, "1000")
+					}
+					if got := attrs["employee.#"]; got != "1" {
+						return fmt.Errorf("employee.# = %q, want %q", got, "1")
+					}
+					if got := attrs["employee.0.id"]; got != "mj" {
+						return fmt.Errorf("employee.0.id = %q, want %q", got, "mj")
+					}
+					return nil
+				},
 			},
 		},
 	})
