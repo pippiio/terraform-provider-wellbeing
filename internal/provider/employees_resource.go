@@ -397,6 +397,22 @@ func (r *employeesResource) Delete(ctx context.Context, req resource.DeleteReque
 
 func (r *employeesResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	// The import ID is the company ID. Read fills in the employees themselves.
+	if r.client.CompanyID() != req.ID {
+		resp.Diagnostics.AddError(
+			"Invalid Import ID",
+			"The import ID must be the company ID.",
+		)
+		return
+	}
+
+	if req.ID == "" {
+		resp.Diagnostics.AddError(
+			"Invalid Import ID",
+			"The import ID must be the company ID.",
+		)
+		return
+	}
+	
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
