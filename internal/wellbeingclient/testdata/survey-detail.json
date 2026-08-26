@@ -1,0 +1,54 @@
+{
+  "Id": 1710,
+  "Name": "zz-tf-probe-A",
+  "SurveyDefinitionId": 1579,
+  "StartDate": "2030-01-01T00:00:00",
+  "EndDate": "2030-12-31T00:00:00",
+  "State": 1,
+  "Frequency": 3,
+  "SurveySelectionRule": "{\"EnabledLanguages\": \"[{\\\"id\\\": 1041, \\\"label\\\": \\\"Danish\\\", \\\"code\\\": \\\"da\\\"}]\"}",
+  "Labels": {
+    "da": {
+      "SurveyDefinition.1579.Step.Q1.Content": "Velkommen probe",
+      "SurveyDefinition.1579.Step.Q2.Option1": "Ja",
+      "SurveyDefinition.1579.Step.Q2.Option2": "Nej",
+      "SurveyDefinition.1579.Step.Q2.Question": "Foerste spoergsmaal",
+      "SurveyDefinition.1579.Step.Q3.Question": "Uddyb gerne",
+      "SurveyDefinition.1579.Step.Q4.Content": "Tak probe"
+    },
+    "en": {
+      "SurveyDefinition.1579.Step.Q1.Content": "Welcome probe",
+      "SurveyDefinition.1579.Step.Q2.Option1": "Yes",
+      "SurveyDefinition.1579.Step.Q2.Option2": "No",
+      "SurveyDefinition.1579.Step.Q2.Question": "First question",
+      "SurveyDefinition.1579.Step.Q3.Question": "Please elaborate",
+      "SurveyDefinition.1579.Step.Q4.Content": "Thanks probe"
+    }
+  },
+  "Questions": [
+    {
+      "Order": 1,
+      "Key": "Q1",
+      "StepType": 1,
+      "Configuration": null
+    },
+    {
+      "Order": 2,
+      "Key": "Q2",
+      "StepType": 2,
+      "Configuration": "{\"AnswerOptions\":[{\"LabelKey\":\"Option1\",\"Value\":1},{\"LabelKey\":\"Option2\",\"Value\":2}]}"
+    },
+    {
+      "Order": 3,
+      "Key": "Q3",
+      "StepType": 3,
+      "Configuration": null
+    },
+    {
+      "Order": 4,
+      "Key": "Q4",
+      "StepType": 99,
+      "Configuration": null
+    }
+  ]
+}
