@@ -84,7 +84,7 @@ func (d *employeesDataSource) Read(ctx context.Context, _ datasource.ReadRequest
 	// API's own view of every field.
 	models := make(map[string]employeeModel, len(employees))
 	for _, employee := range employees {
-		model, diags := fromAPIEmployee(ctx, employee, nil)
+		model, diags := fromAPIEmployee(ctx, employee, nil, "")
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
 			return

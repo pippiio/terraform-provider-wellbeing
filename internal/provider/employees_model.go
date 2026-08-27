@@ -3,9 +3,11 @@ package provider
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -185,7 +187,7 @@ func resolveName(model employeeModel) (string, string, diag.Diagnostics) {
 	}
 
 	for label, value := range map[string]string{"first name": firstname, "last name": lastname} {
-		if len(value) > maxNameLength {
+		if utf8.RuneCountInString(value) > maxNameLength {
 			diags.AddError(
 				"Employee name is too long",
 				fmt.Sprintf("Employee %q has a %s of %d characters; the Wellbeing API allows at most %d.",
@@ -264,9 +266,7 @@ func toAPIEmployee(ctx context.Context, model employeeModel, defaultCountryCode 
 	// Split the configured dimensions: the three well-known keys travel as
 	// top-level fields, everything else stays in Dimensions.
 	remaining := make(map[string]string, len(dimensions))
-	for key, value := range dimensions {
-		remaining[key] = value
-	}
+	maps.Copy(remaining, dimensions)
 
 	for _, key := range hoistedDimensionKeys {
 		value, ok := dimensions[key]
@@ -297,9 +297,17 @@ func toAPIEmployee(ctx context.Context, model employeeModel, defaultCountryCode 
 //
 // prior is the matching configured block, or nil when none exists — the case for
 // the data source and for employees the API returns that config does not
-// mention. When prior is present its name and invitation_date are carried
-// forward, because the API cannot report them in the form they were configured.
-func fromAPIEmployee(ctx context.Context, employee wellbeingclient.Employee, prior *employeeModel) (employeeModel, diag.Diagnostics) {
+// mention. When prior is present, configured spellings are carried forward only
+// where the API agrees with them; a genuine upstream change surfaces as drift.
+//
+// defaultCountryCode is needed to normalise the configured phone the same way
+// toAPIEmployee does, so the two can be compared like for like.
+func fromAPIEmployee(
+	ctx context.Context,
+	employee wellbeingclient.Employee,
+	prior *employeeModel,
+	defaultCountryCode string,
+) (employeeModel, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
 	model := employeeModel{
@@ -320,17 +328,43 @@ func fromAPIEmployee(ctx context.Context, employee wellbeingclient.Employee, pri
 	}
 
 	if prior != nil {
-		// The API reports Firstname and Lastname, but config may have expressed
-		// them as a single name. Echoing the API's split back would diff against
-		// a config that never set them, so the configured spelling wins.
-		model.Name = prior.Name
-		model.Firstname = prior.Firstname
-		model.Lastname = prior.Lastname
+		// InvitationDate is write-only: the API never returns it, so there is
+		// nothing to compare against and drift in it cannot be detected at all.
+		// Carrying the configured value forward is the only option.
 		model.InvitationDate = prior.InvitationDate
 
-		// Likewise for the phone: the API returns the normalised international
-		// form, which would diff against a config holding a bare number.
-		model.Phone = prior.Phone
+		// Name and phone need care in both directions.
+		//
+		// The API reports what config asked for, but in its own shape: a single
+		// `name` comes back split into Firstname and Lastname, and a bare phone
+		// comes back in international form. Reporting those back verbatim would
+		// diff against a config that never wrote them that way, on every plan.
+		//
+		// Carrying the configured spelling forward unconditionally fixes that,
+		// but goes too far: it also discards genuine changes made in the
+		// Wellbeing portal, so an employee edited outside Terraform never shows
+		// as drift and is never corrected.
+		//
+		// So compare what config *resolves to* against what the API holds. Equal
+		// means the API is echoing our own value and the configured spelling
+		// wins. Different means someone changed it upstream, and the API's value
+		// goes into state so the next plan puts it back.
+		priorFirstname, priorLastname, _ := resolveName(*prior)
+		if priorFirstname == employee.Firstname && priorLastname == employee.Lastname {
+			model.Name = prior.Name
+			model.Firstname = prior.Firstname
+			model.Lastname = prior.Lastname
+		} else {
+			model.Name = types.StringNull()
+			model.Firstname = types.StringValue(employee.Firstname)
+			model.Lastname = types.StringValue(employee.Lastname)
+		}
+
+		if normalizedPriorPhone(*prior, defaultCountryCode) == derefString(employee.ContactNumber) {
+			model.Phone = prior.Phone
+		} else {
+			model.Phone = stringOrNull(employee.ContactNumber)
+		}
 	} else {
 		// No config to echo — report what the API holds. GET returns the phone
 		// number as ContactNumber rather than Phonenumber.
@@ -368,9 +402,7 @@ func fromAPIEmployee(ctx context.Context, employee wellbeingclient.Employee, pri
 	// Fold any top-level department fields back into the dimensions map so the
 	// round trip matches what the user configured.
 	dimensions := make(map[string]string, len(employee.Dimensions)+len(hoistedDimensionKeys))
-	for key, value := range employee.Dimensions {
-		dimensions[key] = value
-	}
+	maps.Copy(dimensions, employee.Dimensions)
 	for key, value := range map[string]*string{
 		"Department":       employee.Department,
 		"ImmediateManager": employee.ImmediateManager,
@@ -458,4 +490,30 @@ func configureDataSourceClient(req datasource.ConfigureRequest, resp *datasource
 	}
 
 	return client
+}
+
+// normalizedPriorPhone renders a configured phone the way the API stores it, so
+// the two can be compared without a shape difference reading as a change.
+//
+// Diagnostics are discarded deliberately: an unparseable phone in prior state
+// is not something a refresh should fail on, and returning "" makes it compare
+// unequal to any real number, which surfaces as drift — the safe direction.
+func normalizedPriorPhone(prior employeeModel, defaultCountryCode string) string {
+	raw := optionalString(prior.Phone)
+	if raw == nil {
+		return ""
+	}
+
+	normalized, diags := normalizePhone(*raw, defaultCountryCode, prior.ID.ValueString())
+	if diags.HasError() || normalized == nil {
+		return ""
+	}
+	return *normalized
+}
+
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }

@@ -337,7 +337,7 @@ func (r *employeesResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 
-	refreshed, diags := employeesFromAPIOrdered(ctx, employees, state.Employee)
+	refreshed, diags := employeesFromAPIOrdered(ctx, employees, state.Employee, state.DefaultCountryCode.ValueString())
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -494,7 +494,7 @@ func (r *employeesResource) applyEmployees(ctx context.Context, plan *employeesR
 		return
 	}
 
-	refreshed, refreshDiags := employeesFromAPIOrdered(ctx, employees, plan.Employee)
+	refreshed, refreshDiags := employeesFromAPIOrdered(ctx, employees, plan.Employee, countryCode)
 	diags.Append(refreshDiags...)
 	if diags.HasError() {
 		return
@@ -511,7 +511,12 @@ func (r *employeesResource) applyEmployees(ctx context.Context, plan *employeesR
 // order than it was written would diff on every plan. Employees the API returns
 // that config does not mention are appended in id order, so they surface as
 // drift the next plan removes.
-func employeesFromAPIOrdered(ctx context.Context, apiEmployees []wellbeingclient.Employee, prior []employeeModel) ([]employeeModel, diag.Diagnostics) {
+func employeesFromAPIOrdered(
+	ctx context.Context,
+	apiEmployees []wellbeingclient.Employee,
+	prior []employeeModel,
+	defaultCountryCode string,
+) ([]employeeModel, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
 	remaining := make(map[string]wellbeingclient.Employee, len(apiEmployees))
@@ -532,7 +537,7 @@ func employeesFromAPIOrdered(ctx context.Context, apiEmployees []wellbeingclient
 		}
 		delete(remaining, identifier)
 
-		model, employeeDiags := fromAPIEmployee(ctx, employee, &prior[i])
+		model, employeeDiags := fromAPIEmployee(ctx, employee, &prior[i], defaultCountryCode)
 		diags.Append(employeeDiags...)
 		if diags.HasError() {
 			return nil, diags
@@ -541,7 +546,7 @@ func employeesFromAPIOrdered(ctx context.Context, apiEmployees []wellbeingclient
 	}
 
 	for _, identifier := range slices.Sorted(maps.Keys(remaining)) {
-		model, employeeDiags := fromAPIEmployee(ctx, remaining[identifier], nil)
+		model, employeeDiags := fromAPIEmployee(ctx, remaining[identifier], nil, defaultCountryCode)
 		diags.Append(employeeDiags...)
 		if diags.HasError() {
 			return nil, diags

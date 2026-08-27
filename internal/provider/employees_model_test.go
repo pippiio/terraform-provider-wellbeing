@@ -310,7 +310,7 @@ func TestFromAPIEmployeeWithoutPriorReportsAPIView(t *testing.T) {
 		SourcedFromExternalSystem: true,
 	}
 
-	got, diags := fromAPIEmployee(context.Background(), api, nil)
+	got, diags := fromAPIEmployee(context.Background(), api, nil, "")
 	if diags.HasError() {
 		t.Fatalf("fromAPIEmployee returned diagnostics: %v", diags)
 	}
@@ -364,7 +364,7 @@ func TestFromAPIEmployeeCarriesConfiguredFormsForward(t *testing.T) {
 		ContactNumber:    &normalized,
 	}
 
-	got, diags := fromAPIEmployee(context.Background(), api, &prior)
+	got, diags := fromAPIEmployee(context.Background(), api, &prior, "+45")
 	if diags.HasError() {
 		t.Fatalf("fromAPIEmployee returned diagnostics: %v", diags)
 	}
@@ -389,7 +389,7 @@ func TestFromAPIEmployeeNullsEmptyDimensions(t *testing.T) {
 
 	api := wellbeingclient.Employee{EmployeeID: "emp-1", EmploymentStatus: 0}
 
-	got, diags := fromAPIEmployee(context.Background(), api, nil)
+	got, diags := fromAPIEmployee(context.Background(), api, nil, "")
 	if diags.HasError() {
 		t.Fatalf("fromAPIEmployee returned diagnostics: %v", diags)
 	}
@@ -429,7 +429,7 @@ func TestRoundTripPreservesDimensions(t *testing.T) {
 		},
 	}
 
-	got, diags := fromAPIEmployee(context.Background(), served, &model)
+	got, diags := fromAPIEmployee(context.Background(), served, &model, "+45")
 	if diags.HasError() {
 		t.Fatalf("fromAPIEmployee returned diagnostics: %v", diags)
 	}
@@ -486,7 +486,7 @@ func TestFromAPIEmployeePreservesExplicitlyEmptyDimensions(t *testing.T) {
 		EmploymentStatus: 0,
 	}
 
-	got, diags := fromAPIEmployee(context.Background(), api, &prior)
+	got, diags := fromAPIEmployee(context.Background(), api, &prior, "+45")
 	if diags.HasError() {
 		t.Fatalf("fromAPIEmployee returned diagnostics: %v", diags)
 	}
