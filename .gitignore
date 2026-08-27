@@ -1,0 +1,4 @@
+*.tfstate*
+
+# Design specs and implementation plans are working documents, not shipped artifacts.
+docs/superpowers/
