@@ -202,6 +202,7 @@ func (p *wellbeingProvider) DataSources(_ context.Context) []func() datasource.D
 		NewEnabledLanguagesDataSource,
 		NewSurveyAnswersDataSource,
 		NewSurveyTemplatesDataSource,
+		NewSurveysDataSource,
 	}
 }
 
@@ -209,5 +210,6 @@ func (p *wellbeingProvider) DataSources(_ context.Context) []func() datasource.D
 func (p *wellbeingProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewEmployeesResource,
+		NewSurveyResource,
 	}
 }

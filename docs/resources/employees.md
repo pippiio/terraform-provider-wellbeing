@@ -42,7 +42,6 @@ resource "wellbeing_employees" "this" {
     # selection rules filter on.
     dimensions = {
       Location = "copenhagen"
-      
     }
   }
 
@@ -65,6 +64,7 @@ resource "wellbeing_employees" "this" {
     lastname = "de Silva"
     email    = "rds@example.dk"
   }
+
 
   timeouts {
     create = "60m"
@@ -112,10 +112,10 @@ The API accepts the first three as dedicated fields and returns all of them nest
 - `invitation_date` (String) When to send the invitation, formatted `yyyy-MM-ddTHH:mm:ssZ`. Applies only to employees being created; the API never returns it, so the configured value is carried forward in state unchanged.
 - `job_title` (String) Role in the company, for example `Sales Manager`.
 - `lastname` (String) Last name, overriding whatever `name` would split to.
-- `name` (String) Full name, split at the first space into first and last name. `"Anna Van der Berg"` becomes `Anna` / `Van der Berg`.
+- `name` (String) Full name, split at the first space into first and last name. `"Rosario de Silva"` becomes `Rosario` / `de Silva`.
 
 Set `firstname` or `lastname` to override the split for a name it gets wrong. A single-word name leaves no surname, which the API rejects, so those need an explicit `lastname`.
-- `phone` (String) Cell phone. Either full international form (`+4523232323`) or a national number that `default_country_code` completes. Must be unique.
+- `phone` (String) Cell phone. Either full international form (`+4512345678`) or a national number that `default_country_code` completes. Must be unique.
 
 Read-Only:
 

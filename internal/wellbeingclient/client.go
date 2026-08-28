@@ -89,6 +89,18 @@ func NewClient(host, token, companyID string, opts ...Option) (*Client, error) {
 	// go-plugin protocol stream. Terraform logging goes through tflog instead.
 	retryClient.Logger = nil
 
+	// Once retries are exhausted retryablehttp discards the final response and
+	// returns an error of its own, which loses the API's explanation. The survey
+	// endpoints report validation failures as a 500 carrying the reason in the
+	// body ("Survey must contain one cover page and one thank you page"), so
+	// hand the last response back and let do parse it into an APIError.
+	retryClient.ErrorHandler = func(resp *http.Response, err error, _ int) (*http.Response, error) {
+		if resp != nil {
+			return resp, nil
+		}
+		return nil, err
+	}
+
 	c := &Client{
 		httpClient:  retryClient,
 		host:        strings.TrimSuffix(strings.TrimSpace(host), "/"),
