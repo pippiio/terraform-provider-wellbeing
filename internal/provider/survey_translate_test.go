@@ -550,3 +550,56 @@ func keysOfStringMap(m map[string]string) []string {
 	}
 	return out
 }
+
+func TestAttachServerKeysKeepsIdenticallyWordedAnswersApart(t *testing.T) {
+	// Two answers within one question may be worded the same — nothing rejects
+	// that, unlike duplicate question keys. Matching options by their text would
+	// collapse both onto the last one's identity, and the update would then send
+	// the same option twice while orphaning the other.
+	state := minimalSurvey(t)
+	state.Question[0].ServerKey = types.StringValue("Q2")
+	state.Question[0].Answer[0].Text = types.StringValue("Andet")
+	state.Question[0].Answer[0].ServerLabelKey = types.StringValue("Option1")
+	state.Question[0].Answer[0].Value = types.Int64Value(1)
+	state.Question[0].Answer[1].Text = types.StringValue("Andet")
+	state.Question[0].Answer[1].ServerLabelKey = types.StringValue("Option2")
+	state.Question[0].Answer[1].Value = types.Int64Value(2)
+
+	plan := minimalSurvey(t)
+	plan.Question[0].Answer[0].Text = types.StringValue("Andet")
+	plan.Question[0].Answer[1].Text = types.StringValue("Andet")
+
+	attachServerKeys(&plan, state)
+
+	if got := plan.Question[0].Answer[0].ServerLabelKey.ValueString(); got != "Option1" {
+		t.Errorf("first answer ServerLabelKey = %q, want Option1", got)
+	}
+	if got := plan.Question[0].Answer[0].Value.ValueInt64(); got != 1 {
+		t.Errorf("first answer Value = %d, want 1", got)
+	}
+	if got := plan.Question[0].Answer[1].ServerLabelKey.ValueString(); got != "Option2" {
+		t.Errorf("second answer ServerLabelKey = %q, want Option2", got)
+	}
+	if got := plan.Question[0].Answer[1].Value.ValueInt64(); got != 2 {
+		t.Errorf("second answer Value = %d, want 2", got)
+	}
+}
+
+func TestAttachServerKeysLeavesAddedAnswersUnkeyed(t *testing.T) {
+	// An option beyond what state holds is new to the server and must stay
+	// unkeyed so one gets allocated for it.
+	state := minimalSurvey(t)
+	state.Question[0].ServerKey = types.StringValue("Q2")
+	state.Question[0].Answer = state.Question[0].Answer[:1]
+	state.Question[0].Answer[0].ServerLabelKey = types.StringValue("Option1")
+
+	plan := minimalSurvey(t)
+	attachServerKeys(&plan, state)
+
+	if got := plan.Question[0].Answer[0].ServerLabelKey.ValueString(); got != "Option1" {
+		t.Errorf("existing answer ServerLabelKey = %q, want Option1", got)
+	}
+	if got := plan.Question[0].Answer[1].ServerLabelKey.ValueString(); got != "" {
+		t.Errorf("an answer new to this apply must carry no label key, got %q", got)
+	}
+}

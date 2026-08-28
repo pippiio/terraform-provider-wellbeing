@@ -633,7 +633,8 @@ func classifySurveyChange(state, config surveyResourceModel) surveyChangeKind {
 }
 
 // attachServerKeys copies the server-assigned identities from state onto a plan,
-// matching by the configured key.
+// matching questions by their configured key and each question's answers by
+// position.
 //
 // This is what makes an update modify questions instead of duplicating them.
 // A question whose key is absent from state keeps an empty server key, which
@@ -655,17 +656,25 @@ func attachServerKeys(plan *surveyResourceModel, state surveyResourceModel) {
 		}
 		plan.Question[i].ServerKey = previous.ServerKey
 
-		optionsByText := make(map[string]surveyAnswerOptionModel, len(previous.Answer))
-		for _, answer := range previous.Answer {
-			optionsByText[answer.Text.ValueString()] = answer
-		}
+		// Answers are matched by position, not by text. Nothing stops two
+		// options within a question being worded identically — there is no
+		// answer-level equivalent of the duplicate-key check questions get — so
+		// a text lookup would hand both the last one's identity and send the
+		// same option twice while orphaning the other.
+		//
+		// Position is exact here rather than a guess: this runs only when
+		// classifySurveyChange did not ask for a replacement, and the content
+		// fingerprint covers every answer's text and translations in order.
+		// Editing or reordering an option changes it, so on this path the two
+		// option lists are the same list.
 		for j := range plan.Question[i].Answer {
-			prior, ok := optionsByText[plan.Question[i].Answer[j].Text.ValueString()]
-			if !ok {
+			if j >= len(previous.Answer) {
+				// An option added in this apply. Leaving it unkeyed tells the
+				// API to allocate one.
 				continue
 			}
-			plan.Question[i].Answer[j].ServerLabelKey = prior.ServerLabelKey
-			plan.Question[i].Answer[j].Value = prior.Value
+			plan.Question[i].Answer[j].ServerLabelKey = previous.Answer[j].ServerLabelKey
+			plan.Question[i].Answer[j].Value = previous.Answer[j].Value
 		}
 	}
 }
